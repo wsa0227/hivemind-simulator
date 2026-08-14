@@ -46,13 +46,17 @@ import ltd.cdmi.hivemind.simulator.mqtt.MqttClientManager;
 import ltd.cdmi.hivemind.simulator.ws.MopClient;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import lombok.extern.slf4j.Slf4j;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
@@ -1166,13 +1170,24 @@ public class SimulatorController {
 
     // ==================== 消息日志 ====================
 
-    /** 获取最近 MQTT 消息日志 */
+    /**
+     * 获取 MQTT 消息日志。
+     * <p>无 beforeTime 参数时返回内存缓冲中最近的 N 条；有 beforeTime 时从本地文件加载更早的历史。
+     *
+     * @param beforeTime 时间戳分界点（毫秒），返回此时间之前的消息。不传则返回内存中最近 N 条
+     * @param limit      返回条数（默认 500）
+     */
     @GetMapping("/logs")
-    public List<Map<String, Object>> getLogs() {
+    public List<Map<String, Object>> getLogs(
+            @RequestParam(required = false) Long beforeTime,
+            @RequestParam(defaultValue = "500") int limit) {
+        if (beforeTime != null) {
+            return mqtt.queryHistory(beforeTime, limit);
+        }
         return mqtt.getLogs();
     }
 
-    /** 清空消息日志 */
+    /** 清空消息日志（仅清空内存缓冲，本地文件保留） */
     @DeleteMapping("/logs")
     public Map<String, Object> clearLogs() {
         mqtt.clearLogs();
@@ -1182,55 +1197,52 @@ public class SimulatorController {
     }
 
     /**
-     * 导出 OSD 日志数据（替代外部 PowerShell 脚本，避免 Windows Defender 误报）。
-     * <p>从 MQTT 消息日志中过滤指定设备的 OSD 上报数据，返回 {topic, data} 格式。
-     * <p>用法：GET /api/logs/osd-export?sn=7UUXN1Q00A008W&direction=send&limit=200
+     * 导出消息日志数据（从本地文件读取，支持所有消息类型，不仅 OSD）。
+     * <p>用法：GET /api/logs/export?sn=7UUXN1Q00A008W&direction=send&limit=500
      *
-     * @param sn        设备 SN（多个用逗号分隔，必填）
-     * @param direction 方向过滤（默认 send）
-     * @param limit     返回条数（默认 200）
-     * @return OSD 日志列表，每条含 {topic, data}
+     * @param sn        设备 SN（多个用逗号分隔，为空则不过滤）
+     * @param direction 方向过滤（send/recv，默认 send）
+     * @param limit     返回条数（默认 500）
+     * @return 消息日志列表，每条含 {ts, time, topic, method, data}
      */
-    @GetMapping("/logs/osd-export")
-    public List<Map<String, Object>> exportOsdLogs(
-            @RequestParam String sn,
+    @GetMapping("/logs/export")
+    public List<Map<String, Object>> exportLogs(
+            @RequestParam(required = false) String sn,
             @RequestParam(defaultValue = "send") String direction,
-            @RequestParam(defaultValue = "200") int limit) {
-        // 解析 SN 列表
-        List<String> snList = Arrays.stream(sn.split(","))
-                .map(String::trim)
-                .filter(s -> !s.isEmpty())
-                .collect(Collectors.toList());
+            @RequestParam(defaultValue = "500") int limit) {
+        // 解析 SN 列表（为空则不过滤）
+        List<String> snList = null;
+        if (sn != null && !sn.isBlank()) {
+            snList = Arrays.stream(sn.split(","))
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .collect(Collectors.toList());
+        }
 
-        List<Map<String, Object>> logs = mqtt.getLogs();
+        // 从本地文件查询全部消息（limit 放大，后续过滤后再截取）
+        List<Map<String, Object>> logs = mqtt.queryHistory(null, limit * 5);
         List<Map<String, Object>> result = new ArrayList<>();
 
-        // 倒序遍历（取最新 limit 条）
         for (int i = logs.size() - 1; i >= 0 && result.size() < limit; i--) {
             Map<String, Object> entry = logs.get(i);
             String entryDirection = String.valueOf(entry.get("direction"));
             String topic = String.valueOf(entry.get("topic"));
 
-            // 方向过滤
-            if (!direction.equals(entryDirection)) {
-                continue;
+            if (!direction.equals(entryDirection)) continue;
+            if (snList != null && !snList.isEmpty()) {
+                boolean snMatched = snList.stream().anyMatch(topic::contains);
+                if (!snMatched) continue;
             }
-            // SN 过滤（topic 包含任一 SN 即匹配）
-            boolean snMatched = snList.stream().anyMatch(topic::contains);
-            if (!snMatched) {
-                continue;
-            }
-            // 按 topic 过滤 OSD 数据（topic 以 /osd 结尾），不依赖 payload 字段
-            // Dock OSD 分多条推送（电源/任务/位置），只有部分含 latitude/sub_device，按字段过滤会遗漏
-            if (!topic.endsWith("/osd")) {
-                continue;
-            }
+
             String payload = String.valueOf(entry.get("payload"));
             try {
                 JsonNode node = objectMapper.readTree(payload);
                 JsonNode data = node.path("data");
                 Map<String, Object> item = new LinkedHashMap<>();
+                item.put("ts", entry.get("ts"));
+                item.put("time", entry.get("time"));
                 item.put("topic", topic);
+                item.put("method", entry.get("method"));
                 item.put("data", objectMapper.treeToValue(data, Object.class));
                 result.add(item);
             } catch (Exception e) {
@@ -1238,8 +1250,57 @@ public class SimulatorController {
             }
         }
 
-        // 反转为正序（旧→新），与 /api/logs 一致
         java.util.Collections.reverse(result);
+        return result;
+    }
+
+    /**
+     * 下载本地消息日志文件（JSON Lines 格式）。
+     * <p>用法：GET /api/logs/download?date=2026-08-14（不传 date 则下载当天的）
+     */
+    @GetMapping("/logs/download")
+    public ResponseEntity<byte[]> downloadLogFile(
+            @RequestParam(required = false) String date) {
+        var store = mqtt.getMessageLogStore();
+        if (date == null || date.isBlank()) {
+            date = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+        }
+        Path file = store.getLogFile(date);
+        if (!Files.exists(file)) {
+            return ResponseEntity.notFound().build();
+        }
+        try {
+            byte[] content = Files.readAllBytes(file);
+            return ResponseEntity.ok()
+                    .header("Content-Disposition", "attachment; filename=\"messages-" + date + ".jsonl\"")
+                    .header("Content-Type", "application/jsonl")
+                    .body(content);
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().build();
+        }
+    }
+
+    /**
+     * 获取本地日志文件列表（按日期倒序）。
+     */
+    @GetMapping("/logs/files")
+    public List<Map<String, Object>> listLogFiles() {
+        var store = mqtt.getMessageLogStore();
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Path file : store.getLogFiles()) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            String name = file.getFileName().toString();
+            // 文件名格式 messages-yyyy-MM-dd.jsonl
+            String date = name.replace("messages-", "").replace(".jsonl", "");
+            item.put("date", date);
+            item.put("name", name);
+            try {
+                item.put("size", Files.size(file));
+            } catch (Exception e) {
+                item.put("size", 0);
+            }
+            result.add(item);
+        }
         return result;
     }
 

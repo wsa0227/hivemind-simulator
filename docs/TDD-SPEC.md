@@ -3340,36 +3340,62 @@ TDD（测试驱动开发）是本项目的标准开发方式：
 - **那么**：返回 `{result: 0}`
 - **说明**：handleUpdate 通过 `file.isMissingNode() || file.isNull()` 处理缺省与显式 null 两种情况，验证显式 null 边界
 
-### 2.28 OSD 日志导出接口
+### 2.28 消息日志持久化与导出
 
-#### TC-LOG-001：osd-export 按 SN 过滤
-- **给定**：MQTT 日志中有 topic 含 `7UUXN1Q00A008W` 的 send 日志
-- **当**：调用 `GET /api/logs/osd-export?sn=7UUXN1Q00A008W`
+> 消息日志同时写入内存缓冲（最近 500 条）和本地 JSON Lines 文件（按日期滚动），支持前端上拉分页加载历史消息和下载日志文件。
+> 文件位置：`${user.home}/.hivemind-simulator/logs/messages-yyyy-MM-dd.jsonl`
+
+#### TC-LOG-001：消息导出按 SN 过滤
+- **给定**：本地日志文件中有 topic 含 `7UUXN1Q00A008W` 的 send 日志
+- **当**：调用 `GET /api/logs/export?sn=7UUXN1Q00A008W&direction=send`
 - **那么**：返回的日志条目 topic 均包含 `7UUXN1Q00A008W`
 - **那么**：不包含其他 SN 的日志
 
-#### TC-LOG-002：osd-export 按 direction 过滤
-- **给定**：MQTT 日志中有 send 和 recv 日志
-- **当**：调用 `GET /api/logs/osd-export?sn=7UUXN1Q00A008W&direction=send`
+#### TC-LOG-002：消息导出按 direction 过滤
+- **给定**：本地日志文件中有 send 和 recv 日志
+- **当**：调用 `GET /api/logs/export?sn=7UUXN1Q00A008W&direction=send`
 - **那么**：仅返回 direction=send 的日志
 - **说明**：direction 默认值为 send
 
-#### TC-LOG-003：osd-export 仅保留 OSD 数据
-- **给定**：日志中有 OSD 上报（payload.data 含 latitude）和 services 指令（payload.data 无 latitude/sub_device）
-- **当**：调用 `GET /api/logs/osd-export?sn=7UUXN1Q00A008W`
-- **那么**：仅返回 payload.data 含 `latitude` 或 `sub_device` 的日志
-- **那么**：每条返回 `{topic, data}` 格式（data 为 payload.data 对象）
+#### TC-LOG-003：消息导出保留所有消息类型
+- **给定**：日志中有 OSD 上报（topic 以 `/osd` 结尾）和 services 指令（topic 以 `/services` 结尾）
+- **当**：调用 `GET /api/logs/export?sn=7UUXN1Q00A008W`
+- **那么**：返回所有消息类型（不仅 OSD），每条含 `{ts, time, topic, method, data}`
+- **说明**：原 OSD 专用导出已重构为通用消息导出
 
-#### TC-LOG-004：osd-export limit 限制条数
-- **给定**：日志中有 300 条符合条件的 OSD 日志
-- **当**：调用 `GET /api/logs/osd-export?sn=7UUXN1Q00A008W&limit=200`
-- **那么**：返回最新 200 条（按时间倒序取，再正序返回）
-- **说明**：limit 默认值为 200
+#### TC-LOG-004：消息导出 limit 限制条数
+- **给定**：日志中有 500 条符合条件的消息
+- **当**：调用 `GET /api/logs/export?sn=7UUXN1Q00A008W&limit=3`
+- **那么**：返回最新 3 条（按时间倒序取，再正序返回）
+- **说明**：limit 默认值为 500
 
-#### TC-LOG-005：osd-export 多 SN 支持
+#### TC-LOG-005：消息导出多 SN 支持
 - **给定**：日志中有 `7UUXN1Q00A008W` 和 `1081F8HGD25110010059` 两个 SN 的日志
-- **当**：调用 `GET /api/logs/osd-export?sn=7UUXN1Q00A008W,1081F8HGD25110010059`
+- **当**：调用 `GET /api/logs/export?sn=7UUXN1Q00A008W,1081F8HGD25110010059`
 - **那么**：返回两个 SN 的日志合并
+
+#### TC-LOG-006：消息导出 SN 为空时不过滤
+- **给定**：日志中有多个设备的消息
+- **当**：调用 `GET /api/logs/export?direction=send`（不传 sn 参数）
+- **那么**：返回所有设备的消息（不做 SN 过滤）
+
+#### TC-LOG-007：日志分页查询（上拉加载历史）
+- **给定**：本地日志文件中有 1000 条消息，内存缓冲中只有最近 500 条
+- **当**：调用 `GET /api/logs?beforeTime={最早一条的ts}&limit=500`
+- **那么**：返回 ts < beforeTime 的最近 500 条消息（正序：旧→新）
+- **那么**：返回的消息不在内存缓冲中（从文件读取）
+- **说明**：前端上拉时用当前显示中最早一条的 ts 作为 beforeTime
+
+#### TC-LOG-008：日志文件下载
+- **给定**：当天有消息日志文件 `messages-yyyy-MM-dd.jsonl`
+- **当**：调用 `GET /api/logs/download`（不传 date 参数）
+- **那么**：返回当天的日志文件（Content-Type: application/jsonl）
+- **那么**：响应头含 `Content-Disposition: attachment`
+
+#### TC-LOG-009：日志文件列表
+- **给定**：本地有多个日期的日志文件
+- **当**：调用 `GET /api/logs/files`
+- **那么**：返回文件列表（按日期倒序），每条含 `{date, name, size}`
 
 ### 2.29 PSDK 喊话器与负载事件（Dock1/Dock2/Dock3 wayline.html）
 

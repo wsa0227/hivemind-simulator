@@ -238,6 +238,7 @@
         .log-time { color: var(--text-muted); margin-right: 8px; font-size: 11px; }
         .log-method { color: var(--accent); font-weight: 600; margin-right: 8px; }
         .log-topic { color: var(--text-secondary); word-break: break-all; }
+        .log-load-more { color: var(--text-muted); padding: 8px; text-align: center; font-size: 11px; border-bottom: 1px solid var(--border); }
         .log-payload {
             margin-top: 6px;
             padding: 8px 12px;
@@ -454,11 +455,14 @@
                         </el-radio-group>
                         <el-switch v-model="autoScroll" active-text="自动滚动" size="small"></el-switch>
                         <el-button size="small" @click="clearLogs">清空</el-button>
-                        <el-button size="small" @click="exportOsd">导出OSD</el-button>
+                        <el-button size="small" @click="downloadLogFile">下载日志</el-button>
                     </div>
                 </div>
-                <div class="log-container" ref="logContainer">
-                    <div v-for="(log, i) in filteredLogs" :key="i" class="log-row" :class="{'log-row-active': currentMessage && currentMessage._index === i}" @click="openMessageDetail(i)">
+                <div class="log-container" ref="logContainer" @scroll="onLogScroll">
+                    <div v-if="loadingHistory" class="log-load-more">加载中...</div>
+                    <div v-else-if="hasMoreHistory && filteredLogs.length > 0" class="log-load-more">上拉加载更多历史消息</div>
+                    <div v-else-if="!hasMoreHistory && historyLogs.length > 0" class="log-load-more">没有更多历史消息</div>
+                    <div v-for="(log, i) in filteredLogs" :key="(log.ts || '') + '-' + (log.topic || '') + '-' + i" class="log-row" :class="{'log-row-active': currentMessage && currentMessage._index === i}" @click="openMessageDetail(i)">
                         <span class="log-time">{{ log.time }}</span>
                         <span :class="log.direction === 'recv' ? 'log-recv' : 'log-send'">[{{ log.direction === 'recv' ? '收' : '发' }}]</span>
                         <span class="log-method">{{ log.method }}</span>
@@ -855,6 +859,10 @@ const app = createApp({
         let droneTrail = [];
         let dronePolyline = null;
         const logs = ref([]);
+        // 上拉懒加载历史消息：historyLogs 独立于 logs（轮询只更新 logs，历史不会被覆盖）
+        const historyLogs = ref([]);
+        const loadingHistory = ref(false);
+        const hasMoreHistory = ref(true);
         const connecting = ref(false);
         const powered = ref(false);
         const mqttError = ref(false);
@@ -1210,6 +1218,11 @@ const app = createApp({
             const data = await fetchJSON('/api/logs') || [];
             // 防御：限制 logs 数组最大长度，避免后端配置变更或异常导致前端渲染过多 DOM
             logs.value = data.length > 500 ? data.slice(-500) : data;
+            // 内存日志为空时重置历史（断开重连场景）
+            if (logs.value.length === 0) {
+                historyLogs.value = [];
+                hasMoreHistory.value = true;
+            }
             if (autoScroll.value) {
                 await nextTick();
                 scrollToBottom();
@@ -1875,22 +1888,67 @@ const app = createApp({
             await fetchJSON('/api/logs', { method: 'DELETE' });
             showMsgDrawer.value = false;
             currentMessage.value = null;
+            // 清空内存日志的同时重置历史
+            historyLogs.value = [];
+            hasMoreHistory.value = true;
             await refreshLogs();
         }
 
-        // 导出 OSD 日志数据（新窗口打开 JSON，替代外部 PowerShell 脚本）
-        function exportOsd() {
-            const info = deviceInfo.value;
-            // 传所有相关设备 SN（机场/遥控器 + 飞行器），后端按 topic 匹配，OSD topic 因设备而异
-            const sns = [info.dockSn, info.controllerSn, info.droneSn]
-                .filter(sn => sn && sn.trim())
-                .filter((sn, i, arr) => arr.indexOf(sn) === i);
-            if (sns.length === 0) { ElMessage.warning('设备 SN 未获取，请先注册上线'); return; }
-            window.open(`/api/logs/osd-export?sn=${encodeURIComponent(sns.join(','))}&direction=send`, '_blank');
+        // 上拉加载历史消息：从本地日志文件按 ts 分页查询
+        async function loadMoreHistory() {
+            if (loadingHistory.value || !hasMoreHistory.value) return;
+            const allLogs = [...historyLogs.value, ...logs.value];
+            if (allLogs.length === 0) { hasMoreHistory.value = false; return; }
+            // beforeTime 取当前显示中最早一条的 ts
+            const beforeTime = allLogs[0].ts;
+            if (!beforeTime) { hasMoreHistory.value = false; return; }
+
+            loadingHistory.value = true;
+            const el = logContainer.value;
+            const prevScrollHeight = el ? el.scrollHeight : 0;
+            const prevScrollTop = el ? el.scrollTop : 0;
+            try {
+                const data = await fetchJSON(`/api/logs?beforeTime=${beforeTime}&limit=500`) || [];
+                if (data.length === 0) {
+                    hasMoreHistory.value = false;
+                } else {
+                    // 去重：过滤掉 ts >= beforeTime 的（避免时间戳精度导致重叠）
+                    const filtered = data.filter(l => !l.ts || l.ts < beforeTime);
+                    if (filtered.length === 0) {
+                        hasMoreHistory.value = false;
+                    } else {
+                        historyLogs.value = [...filtered, ...historyLogs.value];
+                        if (filtered.length < 500) hasMoreHistory.value = false;
+                    }
+                }
+            } finally {
+                loadingHistory.value = false;
+                // 恢复滚动位置：历史消息插入到顶部后，保持视觉位置不变
+                await nextTick();
+                if (el) {
+                    el.scrollTop = prevScrollTop + (el.scrollHeight - prevScrollHeight);
+                }
+            }
+        }
+
+        // 日志区滚动事件：接近顶部时触发上拉加载
+        function onLogScroll() {
+            const el = logContainer.value;
+            if (!el) return;
+            if (el.scrollTop < 50 && !loadingHistory.value && hasMoreHistory.value) {
+                loadMoreHistory();
+            }
+        }
+
+        // 下载本地日志文件（JSON Lines 格式，当天）
+        function downloadLogFile() {
+            window.open('/api/logs/download', '_blank');
         }
 
         const filteredLogs = computed(() => {
-            return logs.value.filter(l => {
+            // 拼接历史消息（上拉加载）+ 当前内存消息（轮询更新）
+            const all = [...historyLogs.value, ...logs.value];
+            return all.filter(l => {
                 if (logFilter.value !== 'all' && l.direction !== logFilter.value) return false;
                 if (topicFilter.value.length > 0) {
                     const topic = String(l.topic || '');
@@ -1960,7 +2018,7 @@ const app = createApp({
             // 共享方法
             fetchJSON, refreshState, refreshLogs, refreshTask, refreshStreams, refreshMedia, refreshDeviceInfo, refreshConnection,
             saveConnConfig, loadConnConfig, refreshConfig,
-            registerToPlatform, doRegister, doPowerOn, doPowerOff, saveState, clearLogs, exportOsd,
+            registerToPlatform, doRegister, doPowerOn, doPowerOff, saveState, clearLogs, downloadLogFile,
             loadLiveCapability, refreshLiveCapability, openLiveConfigDialog, saveLiveConfig, installFfmpeg,
             saveLocation, loadLocation, saveRcLostAction, triggerRcLost,
             saveAmapKey, clearAmapKey, onMapModeChange, initAmap, createMap, setAirportLocation,
@@ -1979,10 +2037,11 @@ const app = createApp({
         return { mqttConnected, online, powered, mqttError, state, editState, task, streams, media, logs,
                  connConfig, connecting, deviceInfo, showRegisterDialog, licenseLocked, showDeviceInfoDialog,
                  logFilter, autoScroll, logContainer, topicFilter, topicOptions,
-                 filteredLogs,
+                 filteredLogs, historyLogs, loadingHistory, hasMoreHistory,
                  showMsgDrawer, currentMessage, formattedPayload, payloadTruncated,
                  openMessageDetail, copyPayload,
-                 doRegister, doPowerOn, doPowerOff, saveState, clearLogs, exportOsd,
+                 doRegister, doPowerOn, doPowerOff, saveState, clearLogs, downloadLogFile,
+                 loadMoreHistory, onLogScroll,
                  dockModelName, droneModelName, controllerModelName,
                  dockTypeOptions, droneTypeOptions, onDockTypeChange,
                  controllerTypeOptions, pilotDroneTypeOptions, onControllerTypeChange, onDeviceModeChange,

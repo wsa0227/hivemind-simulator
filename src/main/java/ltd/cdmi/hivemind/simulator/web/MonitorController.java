@@ -206,18 +206,18 @@ public class MonitorController {
     }
 
     /**
-     * 导出 OSD 日志数据（替代外部 PowerShell 脚本，避免 Windows Defender 误报）。
-     * <p>从监控器 MQTT 消息日志中过滤指定设备的 OSD 上报数据，返回 {topic, data} 格式。
-     * <p>用法：GET /api/monitor/logs/osd-export?sn=7UUXN1Q00A008W&direction=recv&limit=200
-     * <p>注意：监控器中 OSD 上报方向为 recv（设备→平台），与模拟器的 send 相反。
+     * 导出消息日志数据（支持所有消息类型，不仅 OSD）。
+     * <p>从监控器 MQTT 消息日志中过滤指定设备的消息，返回 {ts, time, topic, method, data} 格式。
+     * <p>用法：GET /api/monitor/logs/export?sn=7UUXN1Q00A008W&direction=recv&limit=200
+     * <p>注意：监控器中设备上报方向为 recv（设备→平台），与模拟器的 send 相反。
      *
      * @param sn        设备 SN（多个用逗号分隔，必填）
      * @param direction 方向过滤（默认 recv，监控器中设备上报为 recv）
      * @param limit     返回条数（默认 200）
-     * @return OSD 日志列表，每条含 {topic, data}
+     * @return 消息日志列表，每条含 {ts, time, topic, method, data}
      */
-    @GetMapping("/logs/osd-export")
-    public List<Map<String, Object>> exportOsdLogs(
+    @GetMapping("/logs/export")
+    public List<Map<String, Object>> exportLogs(
             @RequestParam String sn,
             @RequestParam(defaultValue = "recv") String direction,
             @RequestParam(defaultValue = "200") int limit) {
@@ -241,16 +241,15 @@ public class MonitorController {
             if (!snMatched) {
                 continue;
             }
-            // 按 topic 过滤 OSD 数据（topic 以 /osd 结尾），不依赖 payload 字段
-            if (!topic.endsWith("/osd")) {
-                continue;
-            }
             String payload = String.valueOf(entry.get("payload"));
             try {
                 JsonNode node = objectMapper.readTree(payload);
                 JsonNode data = node.path("data");
                 Map<String, Object> item = new LinkedHashMap<>();
+                item.put("ts", entry.get("ts"));
+                item.put("time", entry.get("time"));
                 item.put("topic", topic);
+                item.put("method", entry.get("method"));
                 item.put("data", objectMapper.treeToValue(data, Object.class));
                 result.add(item);
             } catch (Exception e) {

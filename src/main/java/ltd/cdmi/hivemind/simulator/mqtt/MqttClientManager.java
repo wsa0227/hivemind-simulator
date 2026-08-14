@@ -23,6 +23,7 @@ import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.device.DeviceMode;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticCode;
+import ltd.cdmi.hivemind.simulator.diagnostic.MessageLogStore;
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
 import org.eclipse.paho.client.mqttv3.MqttCallbackExtended;
 import org.eclipse.paho.client.mqttv3.MqttClient;
@@ -63,6 +64,7 @@ public class MqttClientManager implements MqttCallbackExtended {
     private final ObjectMapper objectMapper;
     private final RuntimeConfig runtimeConfig;
     private final DockTopicSchema dockTopicSchema;
+    private final MessageLogStore messageLogStore;
 
     private volatile MqttClient client;
 
@@ -76,12 +78,13 @@ public class MqttClientManager implements MqttCallbackExtended {
     // 使用 ArrayDeque 而非 ArrayList：pollFirst() 是 O(1)，避免 ArrayList.remove(0) 的 O(n) 元素移动
     private final Deque<Map<String, Object>> messageLogs = new ArrayDeque<>();
 
-    public MqttClientManager(MqttProperties mqttProps, SimulatorProperties props, ObjectMapper objectMapper, RuntimeConfig runtimeConfig, DockTopicSchema dockTopicSchema) {
+    public MqttClientManager(MqttProperties mqttProps, SimulatorProperties props, ObjectMapper objectMapper, RuntimeConfig runtimeConfig, DockTopicSchema dockTopicSchema, MessageLogStore messageLogStore) {
         this.mqttProps = mqttProps;
         this.props = props;
         this.objectMapper = objectMapper;
         this.runtimeConfig = runtimeConfig;
         this.dockTopicSchema = dockTopicSchema;
+        this.messageLogStore = messageLogStore;
     }
 
     /**
@@ -334,28 +337,58 @@ public class MqttClientManager implements MqttCallbackExtended {
     }
 
     /**
-     * 记录消息日志（超过最大条数时自动清除历史）。
+     * 记录消息日志（内存缓冲 + 本地文件持久化）。
+     * <p>内存缓冲超过最大条数时自动清除历史；每条消息同时写入本地 JSON Lines 文件，
+     * 供前端上拉加载历史消息和下载日志文件。
      */
     private void addLog(String direction, String topic, String payload) {
-        Map<String, Object> entry = new LinkedHashMap<>();
-        entry.put("time", LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss.SSS")));
-        entry.put("direction", direction);
-        entry.put("topic", topic);
-        // 提取 method 摘要
+        long timestamp = System.currentTimeMillis();
+        String timeStr = LocalDateTime.now().format(DateTimeFormatter.ofPattern("HH:mm:ss.SSS"));
+        String method = "";
         try {
             JsonNode node = objectMapper.readTree(payload);
-            entry.put("method", node.path("method").asText(""));
+            method = node.path("method").asText("");
         } catch (Exception e) {
-            entry.put("method", "");
+            // payload 非 JSON 或解析失败，method 留空
         }
-        // 保留完整 payload 供前端消息详情抽屉格式化显示（日志缓冲条数受 getMaxLogSize 限制，不会无限增长）
+
+        Map<String, Object> entry = new LinkedHashMap<>();
+        entry.put("ts", timestamp);
+        entry.put("time", timeStr);
+        entry.put("direction", direction);
+        entry.put("topic", topic);
+        entry.put("method", method);
         entry.put("payload", payload);
+
+        // 写入内存缓冲（供前端快速查询最近 N 条）
         synchronized (messageLogs) {
             if (messageLogs.size() >= getMaxLogSize()) {
                 messageLogs.pollFirst();  // O(1)，替代 ArrayList.remove(0) 的 O(n)
             }
             messageLogs.addLast(entry);
         }
+
+        // 持久化到本地文件（供前端上拉加载历史 + 下载）
+        messageLogStore.append(direction, topic, method, payload, timestamp);
+    }
+
+    /**
+     * 从本地文件查询历史消息日志（分页）。
+     * <p>返回 timestamp &lt; beforeTime 的最近 limit 条消息（正序：旧→新）。
+     *
+     * @param beforeTime 时间戳分界点（毫秒），null 表示从最新开始
+     * @param limit      返回条数
+     * @return 消息日志列表（正序）
+     */
+    public List<Map<String, Object>> queryHistory(Long beforeTime, int limit) {
+        return messageLogStore.queryHistory(beforeTime, limit);
+    }
+
+    /**
+     * 获取 {@link MessageLogStore} 实例，供 Controller 调用下载/列表功能。
+     */
+    public MessageLogStore getMessageLogStore() {
+        return messageLogStore;
     }
 
     /**

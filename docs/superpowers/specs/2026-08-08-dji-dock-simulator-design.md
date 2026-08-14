@@ -1,6 +1,6 @@
 # DJI Dock 机场模拟器设计文档
 
-- 日期：2026-08-08（2026-08-09 更新）
+- 日期：2026-08-08（2026-08-14 更新）
 - 状态：已批准
 - 定位：开发期临时占位（低保真、快速可用）
 
@@ -1182,3 +1182,239 @@ sequenceDiagram
 | 航线管理 HTTP API | ✅ 已实现 | WaylineApi |
 | JSBridge 参数配置 | ✅ 已实现 | /api/config/pilot + /api/mop/* |
 | MOP 数据传输 | ✅ 已实现 | MopClient |
+
+---
+
+## 17. 架构演进：多厂商扩展与 SDK 抽取
+
+> 日期：2026-08-14 新增
+> 状态：设计阶段（未实施）
+
+### 17.1 演进动机
+
+当前模拟器在实现 DJI Cloud API 协议的过程中，核实了大量协议细节（Topic 格式、消息结构、字段定义、枚举值、指令结构、注册流程、HTTP/WebSocket API）。这些协议知识散布在代码各处，存在两个扩展需求：
+
+1. **多厂商扩展**：未来需支持道通等其他厂商无人机/机场/遥控器的模拟
+2. **SDK 复用**：将 DJI Cloud API 协议知识抽取为独立 SDK，供 hivemind 等第三方平台复用，避免重复核实协议
+
+### 17.2 多厂商扩展方案
+
+采用**渐进式抽象**（方案 B）：引入 `Vendor` 接口封装厂商核心差异，DJI 作为第一个实现，待有道通需求时再验证抽象合理性。
+
+#### Vendor 接口设计
+
+```java
+// core/Vendor.java — 厂商抽象接口
+public interface Vendor {
+    String getId();                    // "dji", "autel"
+    String getDisplayName();           // "DJI 大疆", "Autel 道通"
+    DeviceModelRegistry getModels();   // 设备型号注册表
+    TopicSchema getTopicSchema();      // MQTT topic 模式
+    RegistrationFlow getRegistrationFlow(Context ctx); // 注册流程
+    MessageEnvelope buildEnvelope(String method, String tid, ...); // 消息封装
+    // 后续按需扩展：OsdBuilderFactory, CommandHandler, FeatureSimulator...
+}
+```
+
+#### 目标包结构
+
+```
+simulator/
+├── core/                        # 厂商无关核心框架（新建）
+│   ├── Vendor.java              # 厂商接口
+│   ├── VendorRegistry.java      # 厂商注册表（启动时扫描 @Component Vendor 实现）
+│   ├── DeviceModel.java         # 设备型号接口
+│   ├── TopicSchema.java         # 协议接口（现有 TopicSchema 改为接口）
+│   ├── RegistrationFlow.java    # 注册流程接口
+│   └── MessageEnvelope.java     # 消息封装接口
+│
+├── vendor/                      # 厂商实现（新建）
+│   └── dji/                     # DJI 实现（现有代码迁移）
+│       ├── DjiVendor.java       # DJI 厂商入口
+│       ├── DjiDeviceType.java   # 原 DeviceType
+│       ├── DjiTopicSchema.java  # 原 TopicSchema 实现
+│       ├── DjiDockRegistrationFlow.java   # 原 DockOnlineService 注册逻辑
+│       ├── DjiPilotRegistrationFlow.java  # 原 PilotOnlineService 注册逻辑
+│       ├── telemetry/           # DJI OSD/State Builder
+│       ├── command/             # DJI 指令处理
+│       └── feature/             # DJI 功能模拟
+│
+├── mqtt/                        # MQTT 客户端管理（保持，改为厂商无关）
+├── config/                      # 配置管理（新增 vendor 配置项）
+├── web/                         # Web 控制器（通过 VendorRegistry 获取当前厂商）
+└── diagnostic/                  # 诊断日志（保持）
+```
+
+#### 迁移路径
+
+| 步骤 | 内容 | 时机 |
+|------|------|------|
+| 第 1 步 | 引入 `core/` 接口 + `vendor/dji/`，将 DeviceType/TopicSchema/RegistrationFlow 抽象为接口，DJI 实现迁移 | 确认方案后 |
+| 第 2 步 | 实现 `vendor/autel/`，验证抽象合理性 | 有道通需求时 |
+| 第 3 步 | 逐步将 OSD Builder/CommandHandler/FeatureSimulator 迁移到 Vendor 接口 | 渐进演进 |
+
+### 17.3 DJI Cloud API SDK 抽取
+
+#### SDK 定位
+
+**SDK = DJI Cloud API 协议的 Java 类型化定义**。将模拟器实现过程中核实的协议知识抽取为独立 Maven 模块，供模拟器和 hivemind 共同引用，实现协议定义的单一真相源。
+
+| 维度 | SDK（协议定义） | 模拟器/hivemind（协议使用） |
+|------|----------------|---------------------------|
+| 职责 | 定义"协议是什么" | 实现"如何使用协议" |
+| 内容 | Topic 常量、Method 枚举、消息 POJO、错误码、流程定义 | MQTT 连接管理、设备状态模拟、业务逻辑 |
+| 关系 | 被依赖方 | 依赖方（SDK 的消费者） |
+
+#### SDK 分层架构
+
+```
+dji-cloud-api-sdk/
+├── protocol/                  # 协议定义层（纯定义，无逻辑）
+│   ├── topic/                 # MQTT Topic 模板常量 + 方向（UP/DOWN）
+│   ├── method/                # Method 枚举（Service/Event/Drc/Status/Requests）
+│   ├── envelope/              # 消息封装结构（Request/Reply/Event Envelope）
+│   └── error/                 # DJI result code 常量 + err_infos 结构
+│
+├── model/                     # 设备型号层
+│   ├── DeviceDomain.java      # domain 枚举（0=飞行器,2=遥控器,3=机场）
+│   ├── DeviceModel.java       # 设备型号（domain+type+subType+modelKey）
+│   └── DeviceCompatibility.java # 机场-飞行器-遥控器兼容性矩阵
+│
+├── telemetry/                 # 遥测数据层
+│   ├── OsdField.java          # OSD 字段名枚举
+│   ├── StateField.java        # State 字段名枚举
+│   ├── DockOsd.java           # 机场 OSD 数据 POJO
+│   ├── DroneOsd.java          # 飞行器 OSD 数据 POJO
+│   └── enum/                  # 枚举值定义（ModeCode, NetworkState...）
+│
+├── command/                   # 指令定义层
+│   ├── service/               # services 指令（请求/回复 POJO）
+│   ├── drc/                   # DRC 指令（消息结构 + 各指令 POJO）
+│   └── event/                 # events 事件（数据结构 + 各事件 POJO）
+│
+├── flow/                      # 协议流程层
+│   ├── DockRegistrationFlow.java  # 机场注册流程（5 步序列）
+│   ├── PilotRegistrationFlow.java # Pilot 注册流程
+│   └── OnlineFlow.java        # 上线流程（update_topo）
+│
+├── http/                      # HTTP API 层（路径 + 请求/响应 POJO）
+├── websocket/                 # WebSocket 层（推送消息结构）
+│
+├── codec/                     # 编解码层
+│   ├── MessageCodec.java      # JSON ↔ Java 对象
+│   ├── MessageTypeResolver.java # topic+method → 消息类型
+│   └── TopicBuilder.java      # SN + 通道 → 完整 topic
+│
+└── annotation/                # 协议标注
+    ├── DocUrl.java            # DJI 文档 URL
+    ├── Verified.java          # 已核实标记（DJI 文档明确）
+    └── Inferred.java          # 推断标记（非官方明确，对应 M-2 诊断日志）
+```
+
+#### SDK 与模拟器/hivemind 的关系
+
+```
+┌─────────────────────────────────────────────┐
+│           dji-cloud-api-sdk                  │
+│   （协议定义：Topic/Method/POJO/错误码/流程） │
+└──────────────────┬──────────────────────────┘
+                   │ 依赖
+       ┌───────────┴───────────┐
+       ▼                       ▼
+┌──────────────┐       ┌──────────────┐
+│   模拟器      │       │  hivemind    │
+│ (协议生产方)  │       │ (协议消费方)  │
+│              │       │              │
+│ 用 SDK 构造  │       │ 用 SDK 解析  │
+│ 请求/OSD/事件│       │ 设备消息     │
+│ 用 SDK 解析  │       │ 用 SDK 构造  │
+│ 平台回复     │       │ 指令/回复    │
+└──────────────┘       └──────────────┘
+```
+
+**协议定义层对两者完全一致**——同一个 POJO 既能用于构造（模拟器序列化 Java→JSON）也能用于解析（hivemind 反序列化 JSON→Java）。差异仅在"如何使用协议"：模拟值生成是模拟器自身逻辑，业务处理是平台自身逻辑，这些不在 SDK 范围。
+
+### 17.4 协议确定性与消费者差异
+
+模拟器和 hivemind 对协议枚举值的确定性要求不同，SDK 通过注解标注区分：
+
+| 注解 | 含义 | 模拟器 | hivemind |
+|------|------|--------|----------|
+| `@Verified` | DJI 官方文档明确规定 | ✅ 直接用 | ✅ 直接用 |
+| `@Inferred` | 基于代码/推断，非官方明确 | ✅ 可用（测试足够） | ⚠️ 需真机验证后才能用 |
+| `@Partial` | 枚举不完整（已知部分值） | ✅ 可用 | ❌ 不可用，需补全 |
+
+SDK 提供过滤工具，让 hivemind 只使用已核实定义：
+
+```java
+// 模拟器：使用所有值（含推断）
+ModeCode[] allValues = ModeCode.values();
+
+// hivemind：只使用已核实值
+List<ModeCode> safeValues = ModeCode.verifiedValues();
+```
+
+`@Inferred` 注解是 AGENTS.md 第14条 M-2 诊断日志的编译时体现——将推断决策从运行时日志提升为代码级标注，让消费者在编码阶段就能识别。
+
+### 17.5 SDK 推进路径（闭环验证）
+
+由于当前协议尚有不确定性，采用"先模拟器→真机核对→完善 SDK→给 hivemind"的闭环路径：
+
+```
+阶段 1                   阶段 2                    阶段 3
+SDK 服务模拟器     →     监控器核对真机      →     完善 SDK 给 hivemind
+（含 @Inferred）        （@Inferred→@Verified）   （全 @Verified）
+```
+
+#### 闭环工作流
+
+```
+模拟器用 SDK 构造消息
+        ↓
+模拟器 ↔ hivemind 联调（验证协议结构正确性）
+        ↓
+监控器抓取真机 MQTT 消息
+        ↓
+对比 SDK 定义 vs 真机数据
+        ↓
+发现差异 → 更新 SDK（修正定义 / @Inferred→@Verified / 补全枚举）
+        ↓
+SDK 质量达标（核心协议全 @Verified）
+        ↓
+hivemind 引入 SDK（替换自行核实的协议代码）
+```
+
+#### 为什么这个路径更稳妥
+
+| 风险 | 直接给 hivemind | 先模拟器→核对→hivemind |
+|------|----------------|----------------------|
+| 协议定义错误 | hivemind 基于错误定义开发，返工成本高 | 模拟器先验证，错误在模拟阶段暴露 |
+| 枚举不完整 | hivemind 遗漏真机状态处理 | 真机数据补全枚举后再给 hivemind |
+| 推断值误导 | hivemind 误用推断值 | @Inferred 标注明确隔离，核对后升级 |
+
+#### 关键优势
+
+1. **模拟器是 SDK 的第一个验证工具**：模拟器用 SDK 构造消息能跑通，说明协议结构正确
+2. **监控器是协议核实的真相源**：真机数据比 DJI 文档更可靠（文档可能不完整或过时）
+3. **风险可控**：hivemind 只在 SDK 成熟后引入，不会因协议不完整而返工
+4. **符合模拟器核心价值**："比真机更快捷地验证平台代码正确性"——先确保模拟器正确，再支撑平台
+
+#### 待补充：监控器协议核对能力
+
+当前监控器（`monitor.html` + `MonitorMqttClient`）能抓取 MQTT 消息并展示，但缺少与 SDK 定义的系统化对比能力。后续需补充：
+
+- 监控器导入 SDK 的协议定义（Topic 模板、字段名、枚举值）
+- 抓取真机消息后自动标记与 SDK 定义不符的部分（未知字段、未知枚举值、结构差异）
+- 生成核对报告，指导 SDK 升级
+
+将手动核对变为半自动化，提高核对效率。
+
+### 17.6 SDK 推进阶段
+
+| 阶段 | 内容 | 产出 |
+|------|------|------|
+| 阶段 1：协议定义抽取 | 从现有代码提取 Topic 常量、Method 枚举、Envelope POJO、错误码、DeviceModel | SDK 骨架，模拟器改为引用 SDK |
+| 阶段 2：遥测/指令结构抽取 | 从 OsdBuilder/CommandHandler 提取字段定义和指令 POJO | SDK 完整协议覆盖 |
+| 阶段 3：流程/HTTP/WS 抽取 | 注册流程定义、HTTP API 定义、WebSocket 消息定义 | SDK 功能完整 |
+| 阶段 4：真机核对 | 监控器抓取真机数据，对比 SDK 定义，升级 @Inferred→@Verified | SDK 质量达标 |
+| 阶段 5：独立发布 | SDK 独立 Maven 模块，hivemind 引用 | SDK 可被外部使用 |
