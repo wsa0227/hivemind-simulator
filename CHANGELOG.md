@@ -4,6 +4,20 @@
 
 ## [Unreleased]
 
+## [v1.1.2] - 2026-08-14
+
+### 新增
+- **MQTT 消息日志本地持久化**：每条消息以 JSON Lines 格式写入本地文件（按日期滚动），文件位置 `${user.home}/.hivemind-simulator/logs/messages-yyyy-MM-dd.jsonl`，重启后历史消息不丢失
+- **日志区上拉懒加载**：滚动到顶部自动从本地文件加载更早的历史消息，历史消息独立于轮询缓冲不会被覆盖
+- **日志文件下载**：新增"下载日志"按钮，下载当天完整的原始日志文件（.jsonl 格式）
+- `/api/logs` 接口新增 `beforeTime`/`limit` 分页参数，支持历史消息查询
+- 新增 `/api/logs/download`（下载日志文件）、`/api/logs/files`（文件列表）接口
+
+### 变更
+- "导出OSD"按钮改为"下载日志"按钮，精简功能重叠（原 `/api/logs/export` 接口保留供外部工具调用）
+- 监控器同步改造：`exportOsdLogs` → `exportLogs`，移除 OSD topic 过滤，支持所有消息类型
+- `MqttClientManager.addLog()` 同时写入内存缓冲和本地文件，新增 `ts` 字段供分页查询
+
 ## [v1.1.1] - 2026-08-14
 
 ### 新增
