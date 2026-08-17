@@ -15,15 +15,17 @@
 
 package ltd.cdmi.hivemind.simulator.mqtt;
 
-import ltd.cdmi.hivemind.simulator.device.DeviceType;
+import ltd.cdmi.dji.cloudapi.sdk.model.RcModel;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.topic.TopicChannel;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.topic.TopicTemplate;
 
 /**
  * Pilot 上云（RC 作为网关）的 MQTT Topic 模式。
  * <p>实现 {@link TopicSchema} 接口，提供 Pilot 上云的 Topic 通道。</p>
  * <p>差异点（status/status_reply）按遥控器型号区分：
  * <ul>
- *   <li>DJI RC Plus / DJI RC Pro 行业版：sys/product/{sn}/status（与机场上云一致）</li>
- *   <li>DJI RC Plus 2 行业版：thing/product/{sn}/status（新一代遥控器协议变更）</li>
+ *   <li>DJI RC Plus / DJI RC Pro 行业版：sys/product/{sn}/status（与机场上云一致，取自 {@link TopicTemplate#STATUS}）</li>
+ *   <li>DJI RC Plus 2 行业版：thing/product/{sn}/status（新一代遥控器协议变更，使用 thing/product 前缀）</li>
  * </ul>
  * <p>核实依据：用户提供的 Pilot 上云设备管理（update_topo）属性列表。
  * DJI RC Plus 2 行业版的 Topic 为 thing/product/{gateway_sn}/status，
@@ -32,25 +34,30 @@ import ltd.cdmi.hivemind.simulator.device.DeviceType;
  */
 public class PilotTopicSchema implements TopicSchema {
 
+    /** thing/product 前缀的 status 模板（DJI RC Plus 2 行业版使用） */
+    private static final String THING_PRODUCT_STATUS = TopicTemplate.thingProduct(TopicChannel.STATUS.suffix());
+    /** thing/product 前缀的 status_reply 模板（DJI RC Plus 2 行业版使用，待真机验证） */
+    private static final String THING_PRODUCT_STATUS_REPLY = TopicTemplate.thingProduct(TopicChannel.STATUS_REPLY.suffix());
+
     private final boolean rcPlus2;
 
     /**
      * 根据遥控器类型构造 Pilot 上云 Topic 模式。
      * @param controllerType 遥控器类型
      */
-    public PilotTopicSchema(DeviceType controllerType) {
-        this.rcPlus2 = (controllerType == DeviceType.RC_PLUS_2);
+    public PilotTopicSchema(RcModel controllerType) {
+        this.rcPlus2 = (controllerType == RcModel.RC_PLUS_2);
     }
 
     @Override
     public String status() {
         // DJI RC Plus 2 行业版用 thing/product/{sn}/status，其他机型用 sys/product/{sn}/status
-        return rcPlus2 ? "thing/product/%s/status" : "sys/product/%s/status";
+        return rcPlus2 ? THING_PRODUCT_STATUS : TopicTemplate.STATUS;
     }
 
     @Override
     public String statusReply() {
         // DJI RC Plus 2 行业版的 status_reply Topic 待真机验证，暂与 status 保持一致
-        return rcPlus2 ? "thing/product/%s/status_reply" : "sys/product/%s/status_reply";
+        return rcPlus2 ? THING_PRODUCT_STATUS_REPLY : TopicTemplate.STATUS_REPLY;
     }
 }

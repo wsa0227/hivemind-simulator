@@ -15,6 +15,8 @@
 
 package ltd.cdmi.hivemind.simulator.config;
 
+import ltd.cdmi.dji.cloudapi.sdk.model.PayloadType;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -39,7 +41,8 @@ class PilotConfigTest {
                         new SimulatorProperties.Hivemind.WebSocket("ws://hivemind:8081", "ws-token-xyz")
                 ),
                 new SimulatorProperties.Mop("ws://mop-host", "mop-token-xyz"),
-                new SimulatorProperties.Map("pilot-user", "sim-")
+                new SimulatorProperties.Map("pilot-user", "sim-"),
+                null
         );
     }
 
@@ -52,6 +55,7 @@ class PilotConfigTest {
                 new SimulatorProperties.Media("", false, 0, false, 0),
                 null,
                 null,
+                null,
                 null
         );
     }
@@ -62,24 +66,28 @@ class PilotConfigTest {
 
     // ==================== 初始化：从 SimulatorProperties 读取 ====================
 
+    @DisplayName("补充测试：HivemindHttpToken 从 props 初始化")
     @Test
     void runtimeConfigInitializesHivemindHttpTokenFromProps() {
         RuntimeConfig rc = new RuntimeConfig(testMqttProps(), fullProps(), new LiveConfigStore());
         assertEquals("http-token-abc", rc.getHivemindHttpToken());
     }
 
+    @DisplayName("补充测试：HivemindWsToken 从 props 初始化")
     @Test
     void runtimeConfigInitializesHivemindWsTokenFromProps() {
         RuntimeConfig rc = new RuntimeConfig(testMqttProps(), fullProps(), new LiveConfigStore());
         assertEquals("ws-token-xyz", rc.getHivemindWsToken());
     }
 
+    @DisplayName("补充测试：MapUserName 从 props 初始化")
     @Test
     void runtimeConfigInitializesMapUserNameFromProps() {
         RuntimeConfig rc = new RuntimeConfig(testMqttProps(), fullProps(), new LiveConfigStore());
         assertEquals("pilot-user", rc.getMapUserName());
     }
 
+    @DisplayName("补充测试：MapElementPreName 从 props 初始化")
     @Test
     void runtimeConfigInitializesMapElementPreNameFromProps() {
         RuntimeConfig rc = new RuntimeConfig(testMqttProps(), fullProps(), new LiveConfigStore());
@@ -88,6 +96,7 @@ class PilotConfigTest {
 
     // ==================== 初始化：null 安全（缺失配置降级为空串） ====================
 
+    @DisplayName("补充测试：Hivemind 为 null 时 token 降级为空串")
     @Test
     void runtimeConfigInitializesTokensToEmptyStringWhenHivemindNull() {
         RuntimeConfig rc = new RuntimeConfig(testMqttProps(), emptyProps(), new LiveConfigStore());
@@ -95,6 +104,7 @@ class PilotConfigTest {
         assertEquals("", rc.getHivemindWsToken());
     }
 
+    @DisplayName("补充测试：Map 为 null 时字段降级为空串")
     @Test
     void runtimeConfigInitializesMapFieldsToEmptyStringWhenMapNull() {
         RuntimeConfig rc = new RuntimeConfig(testMqttProps(), emptyProps(), new LiveConfigStore());
@@ -104,6 +114,7 @@ class PilotConfigTest {
 
     // ==================== 运行时 getter/setter ====================
 
+    @DisplayName("补充测试：HivemindHttpToken setter 更新值")
     @Test
     void hivemindHttpTokenSetterUpdatesValue() {
         RuntimeConfig rc = new RuntimeConfig(testMqttProps(), emptyProps(), new LiveConfigStore());
@@ -111,6 +122,7 @@ class PilotConfigTest {
         assertEquals("new-http-token", rc.getHivemindHttpToken());
     }
 
+    @DisplayName("补充测试：HivemindWsToken setter 更新值")
     @Test
     void hivemindWsTokenSetterUpdatesValue() {
         RuntimeConfig rc = new RuntimeConfig(testMqttProps(), emptyProps(), new LiveConfigStore());
@@ -118,6 +130,7 @@ class PilotConfigTest {
         assertEquals("new-ws-token", rc.getHivemindWsToken());
     }
 
+    @DisplayName("补充测试：MapUserName setter 更新值")
     @Test
     void mapUserNameSetterUpdatesValue() {
         RuntimeConfig rc = new RuntimeConfig(testMqttProps(), emptyProps(), new LiveConfigStore());
@@ -125,6 +138,7 @@ class PilotConfigTest {
         assertEquals("updated-user", rc.getMapUserName());
     }
 
+    @DisplayName("补充测试：MapElementPreName setter 更新值")
     @Test
     void mapElementPreNameSetterUpdatesValue() {
         RuntimeConfig rc = new RuntimeConfig(testMqttProps(), emptyProps(), new LiveConfigStore());
@@ -132,6 +146,7 @@ class PilotConfigTest {
         assertEquals("updated-prefix-", rc.getMapElementPreName());
     }
 
+    @DisplayName("补充测试：token setter 接受 null")
     @Test
     void tokenSettersAcceptNullValue() {
         RuntimeConfig rc = new RuntimeConfig(testMqttProps(), fullProps(), new LiveConfigStore());
@@ -142,6 +157,7 @@ class PilotConfigTest {
         assertNull(rc.getHivemindWsToken());
     }
 
+    @DisplayName("补充测试：map setter 接受 null")
     @Test
     void mapSettersAcceptNullValue() {
         RuntimeConfig rc = new RuntimeConfig(testMqttProps(), fullProps(), new LiveConfigStore());
@@ -153,6 +169,7 @@ class PilotConfigTest {
 
     // ==================== media 自动上传配置：初始化 ====================
 
+    @DisplayName("补充测试：media 自动上传字段从 props 初始化")
     @Test
     void runtimeConfigInitializesMediaAutoUploadFieldsFromProps() {
         RuntimeConfig rc = new RuntimeConfig(testMqttProps(), fullProps(), new LiveConfigStore());
@@ -162,6 +179,7 @@ class PilotConfigTest {
         assertEquals(1, rc.getMediaDownloadOwner(), "download-owner 应从 props 读取为 1");
     }
 
+    @DisplayName("补充测试：Media 为 null 时自动上传字段降级为默认值")
     @Test
     void runtimeConfigInitializesMediaAutoUploadFieldsToDefaultsWhenMediaNull() {
         // emptyProps 的 Media 提供显式默认值（false/0/false/0）
@@ -174,6 +192,7 @@ class PilotConfigTest {
 
     // ==================== media 自动上传配置：运行时 getter/setter ====================
 
+    @DisplayName("补充测试：media 自动上传 setter 更新值")
     @Test
     void mediaAutoUploadSettersUpdateValues() {
         RuntimeConfig rc = new RuntimeConfig(testMqttProps(), emptyProps(), new LiveConfigStore());
@@ -189,12 +208,14 @@ class PilotConfigTest {
 
     // ==================== live 直播方式：初始化 ====================
 
+    @DisplayName("补充测试：LiveVideoPublishType 从 props 初始化")
     @Test
     void runtimeConfigInitializesLiveVideoPublishTypeFromProps() {
         RuntimeConfig rc = new RuntimeConfig(testMqttProps(), fullProps(), new LiveConfigStore());
         assertEquals("video-by-manual", rc.getLiveVideoPublishType());
     }
 
+    @DisplayName("补充测试：LiveVideoPublishType 为 null 时降级为默认值")
     @Test
     void runtimeConfigInitializesLiveVideoPublishTypeToDefaultWhenNull() {
         // emptyProps 的 Live.videoPublishType 为 null，应降级为默认 "video-on-demand"
@@ -202,6 +223,7 @@ class PilotConfigTest {
         assertEquals("video-on-demand", rc.getLiveVideoPublishType());
     }
 
+    @DisplayName("补充测试：LiveVideoPublishType setter 更新值")
     @Test
     void liveVideoPublishTypeSetterUpdatesValue() {
         RuntimeConfig rc = new RuntimeConfig(testMqttProps(), emptyProps(), new LiveConfigStore());
@@ -211,6 +233,7 @@ class PilotConfigTest {
 
     // ==================== mop 数据传输配置：初始化 ====================
 
+    @DisplayName("补充测试：Mop host/token 从 props 初始化")
     @Test
     void runtimeConfigInitializesMopHostAndTokenFromProps() {
         RuntimeConfig rc = new RuntimeConfig(testMqttProps(), fullProps(), new LiveConfigStore());
@@ -218,6 +241,7 @@ class PilotConfigTest {
         assertEquals("mop-token-xyz", rc.getMopToken());
     }
 
+    @DisplayName("补充测试：Mop 为 null 时字段降级为空串")
     @Test
     void runtimeConfigInitializesMopFieldsToEmptyStringWhenMopNull() {
         RuntimeConfig rc = new RuntimeConfig(testMqttProps(), emptyProps(), new LiveConfigStore());
@@ -227,6 +251,7 @@ class PilotConfigTest {
 
     // ==================== mop 数据传输配置：运行时 getter/setter ====================
 
+    @DisplayName("补充测试：mop setter 更新值")
     @Test
     void mopSettersUpdateValues() {
         RuntimeConfig rc = new RuntimeConfig(testMqttProps(), emptyProps(), new LiveConfigStore());
@@ -236,6 +261,7 @@ class PilotConfigTest {
         assertEquals("new-mop-token", rc.getMopToken());
     }
 
+    @DisplayName("补充测试：mop setter 接受 null")
     @Test
     void mopSettersAcceptNullValue() {
         RuntimeConfig rc = new RuntimeConfig(testMqttProps(), fullProps(), new LiveConfigStore());
@@ -243,5 +269,31 @@ class PilotConfigTest {
         assertNull(rc.getMopHost());
         rc.setMopToken(null);
         assertNull(rc.getMopToken());
+    }
+
+    // ==================== selectedPayload 负载选择：初始化 + getter/setter ====================
+
+    @DisplayName("补充测试：selectedPayload 默认为 null")
+    @Test
+    void runtimeConfigInitializesSelectedPayloadToNull() {
+        RuntimeConfig rc = new RuntimeConfig(testMqttProps(), fullProps(), new LiveConfigStore());
+        assertNull(rc.getSelectedPayload(), "selectedPayload 默认应为 null（未选择，OSD 构建时回退 defaultCameraFor）");
+    }
+
+    @DisplayName("补充测试：selectedPayload setter 更新值")
+    @Test
+    void selectedPayloadSetterUpdatesValue() {
+        RuntimeConfig rc = new RuntimeConfig(testMqttProps(), emptyProps(), new LiveConfigStore());
+        rc.setSelectedPayload(PayloadType.H20);
+        assertEquals(PayloadType.H20, rc.getSelectedPayload());
+    }
+
+    @DisplayName("补充测试：selectedPayload setter 接受 null 清空选择")
+    @Test
+    void selectedPayloadSetterAcceptsNullToClearSelection() {
+        RuntimeConfig rc = new RuntimeConfig(testMqttProps(), fullProps(), new LiveConfigStore());
+        rc.setSelectedPayload(PayloadType.H30T);
+        rc.setSelectedPayload(null);
+        assertNull(rc.getSelectedPayload(), "设为 null 应清空负载选择");
     }
 }

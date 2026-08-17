@@ -21,6 +21,7 @@ import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
 import ltd.cdmi.hivemind.simulator.http.HivemindHttpClient;
 import ltd.cdmi.hivemind.simulator.http.api.MapElementApi;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -51,7 +52,7 @@ class MapElementWsHandlerTest {
         props = new SimulatorProperties(
                 new SimulatorProperties.Location(30.6, 104.0, 500.0),
                 new SimulatorProperties.Log(3),
-                null, null, null, null, null
+                null, null, null, null, null, null
         );
         objectMapper = new ObjectMapper();
         handler = new MapElementWsHandler(mapElementApi, props, objectMapper);
@@ -63,6 +64,7 @@ class MapElementWsHandlerTest {
 
     // ==================== TC-WS-003：biz_code 分发 ====================
 
+    @DisplayName("TC-WS-003：biz_code 分发支持全部地图元素 code")
     @Test
     void supportedBizCodesContainsAllMapElementCodes() {
         Set<String> codes = handler.supportedBizCodes();
@@ -75,6 +77,7 @@ class MapElementWsHandlerTest {
 
     // ==================== TC-WS-004：map_group_refresh 触发 HTTP 拉取 ====================
 
+    @DisplayName("TC-WS-004：map_group_refresh 触发 HTTP 拉取")
     @Test
     void mapGroupRefreshTriggersFetchForEachGroupId() throws Exception {
         String payload = """
@@ -96,6 +99,7 @@ class MapElementWsHandlerTest {
         verify(mapElementApi, times(2)).getElements(any());
     }
 
+    @DisplayName("TC-WS-004：map_group_refresh 空 ids 不触发拉取")
     @Test
     void mapGroupRefreshWithEmptyIdsDoesNotCallFetch() throws Exception {
         String payload = """
@@ -114,6 +118,7 @@ class MapElementWsHandlerTest {
         verify(mapElementApi, never()).getElements(any());
     }
 
+    @DisplayName("TC-WS-004：map_group_refresh 缺失 ids 不触发拉取")
     @Test
     void mapGroupRefreshWithMissingIdsArrayDoesNotCallFetch() throws Exception {
         String payload = """
@@ -132,6 +137,7 @@ class MapElementWsHandlerTest {
 
     // ==================== TC-WS-005：元素变更通知仅记录事件日志 ====================
 
+    @DisplayName("TC-WS-005：map_element_create 仅记录事件日志")
     @Test
     void mapElementCreateDoesNotTriggerHttpButRecordsEvent() throws Exception {
         String payload = """
@@ -167,6 +173,7 @@ class MapElementWsHandlerTest {
         assertTrue(((String) event.get("payload")).contains("elem-1"));
     }
 
+    @DisplayName("TC-WS-005：map_element_update 仅记录事件日志")
     @Test
     void mapElementUpdateRecordsEvent() throws Exception {
         String payload = """
@@ -192,6 +199,7 @@ class MapElementWsHandlerTest {
         assertEquals("elem-2", events.get(0).get("element_id"));
     }
 
+    @DisplayName("TC-WS-005：map_element_delete 仅记录事件日志")
     @Test
     void mapElementDeleteRecordsEvent() throws Exception {
         String payload = """
@@ -217,6 +225,7 @@ class MapElementWsHandlerTest {
         assertEquals("", events.get(0).get("name"));
     }
 
+    @DisplayName("补充测试：map_group_refresh 也记录事件日志")
     @Test
     void mapGroupRefreshAlsoRecordsEvent() throws Exception {
         String payload = """
@@ -242,6 +251,7 @@ class MapElementWsHandlerTest {
 
     // ==================== TC-WS-006：事件日志容量上限 ====================
 
+    @DisplayName("TC-WS-006：事件日志容量上限 FIFO")
     @Test
     void eventLogEvictsOldestWhenExceedingMaxSize() throws Exception {
         // max-size=3，发送 5 条消息，应只保留最新 3 条
@@ -271,6 +281,7 @@ class MapElementWsHandlerTest {
 
     // ==================== 事件日志查询与清空 ====================
 
+    @DisplayName("补充测试：清空事件日志")
     @Test
     void clearEventsEmptiesLog() throws Exception {
         String payload = """
@@ -288,6 +299,7 @@ class MapElementWsHandlerTest {
         assertTrue(handler.getEvents().isEmpty());
     }
 
+    @DisplayName("TC-WS-005：事件日志条目包含全部必需字段")
     @Test
     void eventLogEntryContainsAllRequiredFields() throws Exception {
         String payload = """

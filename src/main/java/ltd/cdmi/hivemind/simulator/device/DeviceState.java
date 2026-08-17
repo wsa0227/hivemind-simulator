@@ -55,7 +55,7 @@ public class DeviceState {
     private volatile double dockTemperature = 25.0;
     /** 机场湿度 (%) */
     private volatile double dockHumidity = 50.0;
-    /** 风速 (m/s) */
+    /** 风速（m/s，上报时 ×10 转换为 0.1 m/s 单位，DJI 文档定义 wind_speed 单位为 0.1 m/s） */
     private volatile double windSpeed = 3.0;
     /** 风向：1=正北,2=东北,3=东,4=东南,5=南,6=西南,7=西,8=西北 */
     private volatile int windDirection = 1;

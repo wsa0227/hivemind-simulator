@@ -104,19 +104,22 @@ TDD（测试驱动开发）是本项目的标准开发方式：
 - **当**：本地未配置 app_license（留空）
 - **那么**：跳过 License 校验，继续后续注册步骤
 - **当**：本地配置的 app_license 与回复中的不一致
-- **那么**：停止注册，返回错误码 -6
+- **那么**：停止注册，返回错误码 P-4（DiagnosticCode.PLATFORM_LICENSE_MISMATCH）
 - **当**：一致
 - **那么**：继续后续注册步骤
 - **错误后果**：License 不匹配时继续注册，平台会拒绝后续操作
 
-#### TC-REG-007：License 首次注册锁定
+#### TC-REG-007：License 首次注册成功后锁定
 - **给定**：localStorage 中无 `locked_app_license`（首次注册或已清除）
 - **当**：用户点击「注册到第三方平台」
 - **那么**：注册界面显示 DJI License 输入行，用户可输入
 - **当**：用户输入 license 并提交
-- **那么**：将输入的 app_license 存入 `localStorage['locked_app_license']`（无论后续注册成功与否）
-- **那么**：继续发送 config 请求，与云端返回的 app_license 比对（TC-REG-006）
-- **错误后果**：首次输入错误 license 被锁定，后续无法通过修改输入重试，桌面应用必须重装
+- **那么**：使用输入的 app_license 发送 config 请求，与云端返回的 app_license 比对（TC-REG-006）
+- **当**：注册+上线全流程成功（`/api/online` 返回 success=true）
+- **那么**：将使用的 app_license 存入 `localStorage['locked_app_license']`，并隐藏输入行（TC-REG-008）
+- **当**：注册失败（config 超时、绑定码错误、license 不匹配等）
+- **那么**：不锁定 license，用户可修改后重新提交
+- **错误后果**：若注册失败也锁定，首次输入错误 license 会导致后续无法通过修改输入重试，桌面应用必须重装
 
 #### TC-REG-008：License 锁定后注册界面隐藏输入行
 - **给定**：localStorage 中已有 `locked_app_license`（非首次注册）
@@ -200,14 +203,14 @@ TDD（测试驱动开发）是本项目的标准开发方式：
 - **错误后果**：继续执行 update_topo 会误导平台设备已上线，实际绑定未成功
 - **核实依据**：DJI Cloud API Dock2 协议规定 result 非 0 代表错误，应停止流程
 
-#### TC-REG-017：airport_organization_bind 返回 result=0 但 err_infos 非空停止注册
-- **给定**：airport_organization_bind 回复 result=0，但 `output.err_infos` 数组非空（含逐设备错误码，如 210231「设备已绑定其他组织」）
+#### TC-REG-017：airport_organization_bind 返回 result=0 但 err_infos 含非0 err_code 停止注册
+- **给定**：airport_organization_bind 回复 result=0，但 `output.err_infos` 数组中存在 `err_code≠0` 的设备（如 210231「设备已绑定其他组织」）
 - **当**：解析回复
-- **那么**：停止注册流程，透传 err_infos 中第一个 `err_code`（前端按 errorCodeMap 映射提示）
+- **那么**：停止注册流程，透传 err_infos 中第一个非0 `err_code`（前端按 errorCodeMap 映射提示）
 - **那么**：完整 err_infos 记入日志
-- **那么**：记录 M-2 诊断日志（err_infos 非空即失败的判断逻辑为推断，DJI 文档未明确 err_code=0 是否会出现，待真机验证）
+- **那么**：err_infos 中所有 `err_code=0` 的设备视为绑定成功，不停止注册
 - **错误后果**：result=0 但设备级绑定失败时仍继续上线，会导致平台设备状态不一致
-- **核实依据**：DJI Cloud API Dock2 协议 airport_organization_bind 回复结构含 `output.err_infos[]`，示例中 result=0 且 err_infos 含 210231。err_infos 字面意为"错误信息"，推断只含失败设备
+- **核实依据**：DJI Cloud API Dock2 协议 airport_organization_bind 回复结构含 `output.err_infos[]`，err_code=0 表示设备绑定成功，非0代表错误（如 210231）
 
 #### TC-REG-018：airport_bind_status 返回非0 result 停止注册
 - **给定**：airport_bind_status 回复 result≠0（请求级错误，如平台内部异常）
@@ -217,6 +220,51 @@ TDD（测试驱动开发）是本项目的标准开发方式：
 - **注意**：result=0 时，不根据 `bind_status[].is_device_bind_organization` 跳过后续步骤（TC-REG-003 每一步无条件执行），仅 result≠0 才停止
 - **错误后果**：绑定状态查询失败仍继续注册，可能导致后续步骤在错误状态下执行
 - **核实依据**：DJI Cloud API Dock1/Dock2 协议 airport_bind_status 回复规定 result 非 0 代表错误
+
+#### TC-REG-022：注册失败返回失败步骤（step）
+- **给定**：注册流程中某步骤失败（config 超时、绑定码错误、license 不匹配等）
+- **当**：`/api/online` 返回
+- **那么**：返回体包含 `step` 字段，标识失败环节（如 "config 配置请求"/"绑定状态查询"/"组织信息查询"/"设备绑定"/"设备上线"）
+- **那么**：注册成功时 `step` 为 null
+- **那么**：前端 `formatRegisterError(code, step)` 组合提示，如"组织信息查询失败：未收到平台应答"
+- **错误后果**：用户看到统一的"未收到平台应答"无法判断哪一步失败，难以定位问题
+
+#### TC-REG-023：注册中显示流程进度提示
+- **给定**：用户点击「确认注册」，`connecting=true`
+- **当**：等待 `/api/online` 响应期间（可能 10-40 秒）
+- **那么**：注册弹窗显示流程步骤提示（config → 绑定状态 → 组织查询 → 设备绑定 → 上线）
+- **那么**：用户知道流程长度，不会误判卡死
+- **错误后果**：长时间仅显示按钮 loading，用户以为卡死而强制关闭，产生孤儿 sidecar 进程
+
+#### TC-REG-024：注册失败断开 MQTT 连接
+- **给定**：MQTT 连接成功，但注册流程失败（config 超时、绑定码错误、license 不匹配等）
+- **当**：`/api/online` 返回 success=false
+- **那么**：调用 `/api/disconnect` 断开 MQTT 连接（不执行下线流程，保留诊断日志）
+- **那么**：前端 mqttConnected 同步为 false，localStorage.registered 设为 false
+- **错误后果**：MQTT 连接保持但注册失败，状态不一致；下次注册行为不明确（可能复用旧连接）
+- **注意**：不使用 `/api/offline`，因为会清空诊断日志（diagnosticRecorder.clear()），用户需要查看注册失败的诊断详情
+
+#### TC-REG-025：关机时清空 MQTT 消息日志与历史分页状态
+- **给定**：设备开机并连接 MQTT，指令通讯窗口有消息，用户上拉加载过历史消息（historyLogs 非空）
+- **当**：点击关机
+- **那么**：后端 `/api/offline` 清空诊断日志与 MQTT 消息日志（mqtt.clearLogs()）
+- **那么**：前端清空 logs、historyLogs，重置 hasMoreHistory=true
+- **那么**：下次开机后指令通讯窗口为空，上拉不会加载上一次会话的消息
+- **错误后果**：关机不清空历史状态，开机后翻页加载跨会话消息，用户误以为是当前会话通讯，造成调试误导
+- **核实依据**：关机 = 会话结束，与诊断日志清空（diagnosticRecorder.clear()）保持一致
+
+#### TC-REG-026：关机时无论 offline 接口是否成功都重置前端状态
+- **给定**：设备在线（online=true, mqttConnected=true, powered=true）
+- **当**：点击关机，但 `/api/offline` 返回 null（后端异常或网络错误）
+- **那么**：前端仍重置 online=false, mqttConnected=false, powered=false, mqttError=false, connecting=false
+- **错误后果**：offline 失败时 online/mqttConnected 保持 true 但 powered=false，设备关机了却显示在线/MQTT已连接，状态不一致
+
+#### TC-REG-027：开机时显式重置 MQTT/设备状态
+- **给定**：上次关机时 offline 接口失败，online/mqttConnected 残留为 true
+- **当**：点击开机
+- **那么**：开机时显式重置 mqttConnected=false, online=false, mqttError=false
+- **那么**：随后 registerToPlatform 根据实际注册结果更新状态
+- **错误后果**：开机后（未自动注册时）显示上一次残留的在线状态，用户困惑
 
 ### 2.3 上线流程
 
@@ -371,16 +419,16 @@ TDD（测试驱动开发）是本项目的标准开发方式：
 > `PilotOnlineService.publishDroneState()` 遍历所有 `DroneStateBuilder`，选择 `supports()` 返回 true 的进行构造。
 > 当前实现：`Mavic3StateBuilder`（Mavic 3E/3T）、`M4StateBuilder`（M400/M4E/M4T，三者 pushMode=1 字段集一致，共用）。
 
-#### TC-ONLINE-012：其他机型 Pilot 模式 drone OSD/state 字段集（待实现）
-- **状态**：待实现 — 机型范围已明确（M350 RTK / M300 RTK / M30 / M30T），待用户设计的全新 Pilot 模拟器页面（机型+相机组合选择）落地后实现
+#### TC-ONLINE-012：其他机型 Pilot 模式 drone OSD/state 字段集（已实现）
+- **状态**：已实现 — OtherDroneOsdBuilder（M350/M300 OSD）+ OtherStateBuilder（M350/M300/M30/M30T state）+ PayloadType.defaultCameraFor 扩展（M350/M300 默认 H20）+ OsdContext.isThermal 扩展（支持通用云台热成像判断）
 - **"其他机型"定义**（DJI Cloud API 产品支持文档 + 用户确认）：
   Pilot 上云（网关为遥控器）的所有机型，除去 Mavic 3 行业系列、DJI Matrice 4 系列、Matrice 400，剩余机型：
   | 机型 | 网关 | domain/type/sub_type | DeviceType 状态 | 兼容相机（官方文档） |
   |---|---|---|---|---|
   | Matrice 350 RTK | DJI RC Plus | 0/89/0 | 已有枚举（M350_RTK） | H20/H20T/H20N/H30/H30T |
   | Matrice 300 RTK | DJI RC Plus / 带屏遥控器行业版 | 0/60/0 | 已有枚举（M300_RTK） | H20/H20T/H20N/H30/H30T + Z30/XT2/XT S（仅带屏遥控器行业版） |
-  | Matrice 30 | DJI RC Plus | 0/67/0 | **缺失，待添加**（M30） | Matrice 30 Camera (52-0-0) |
-  | Matrice 30T | DJI RC Plus | 0/67/1 | **缺失，待添加**（M30T） | Matrice 30T Camera (53-0-0) |
+  | Matrice 30 | DJI RC Plus | 0/67/0 | 已有枚举（M30） | Matrice 30 Camera (52-0-0) |
+  | Matrice 30T | DJI RC Plus | 0/67/1 | 已有枚举（M30T） | Matrice 30T Camera (53-0-0) |
 - **核实依据**：
   1. 用户提供的"其他机型-飞行器"设备属性列表（pushMode=0 + pushMode=1 完整字段集）
   2. DJI Cloud API 产品支持文档：https://developer.dji.com/doc/cloud-api-tutorial/cn/overview/product-support.html
@@ -395,27 +443,27 @@ TDD（测试驱动开发）是本项目的标准开发方式：
 - **那么**：state（pushMode=1）字段集 = Mavic 3 state 字段集 + 负载相关字段：
   - Mavic 3 共有字段：mode_code_reason、dongle_infos、serious_low_battery_warning_threshold、low_battery_warning_threshold、control_source、home_latitude、home_longitude、firmware_upgrade_status、compatible_status、firmware_version(pushMode=1)、camera_watermark_settings
   - **新增**：`{type-subtype-gimbalindex}.payload_index`（pushMode=1, r，值为用户选择的相机负载索引）
-  - **新增**：`{type-subtype-gimbalindex}.thermal_supported_palette_styles`（pushMode=1, r，仅热成像相机上报）
+  - ~~`{type-subtype-gimbalindex}.thermal_supported_palette_styles`~~ — 已删除：DJI 官方 Pilot 模式"其他机型"属性列表无此字段，仅 Dock 模式 M3D/M30 properties 文档有此字段
 - **待办项（实现前置）**：
-  1. **DeviceType**：添加 M30 (0/67/0)、M30T (0/67/1) 枚举值，包括默认 SN、默认相机类型
-  2. **PayloadType**：添加 M30_CAMERA(52-0-0)、M30T_CAMERA(53-0-0)、H20_CAMERA(42-0-0, compatible M350/M300)、H20T_CAMERA(43-0-0)、H20N_CAMERA(61-0-0)、H30_CAMERA(82-0-0)、H30T_CAMERA(83-0-0)，并补充 M350/M300 的 compatibleAircraft
-  3. **新建 Pilot 模拟器 UI 页面**：支持机型选择 + 相机组合选择 + 第三方平台登录等交互（用户确认需求）
-  4. **OtherDroneOsdBuilder**：新建，supports M350_RTK/M300_RTK/M30/M30T，OSD 字段集 = Mavic 3 字段 + `{type-subtype-gimbalindex}`
-  5. **OtherStateBuilder**：新建，supports 同上，state 字段集 = Mavic 3 state + `payload_index` + `thermal_supported_palette_styles`
+  1. ~~**DeviceType**：添加 M30 (0/67/0)、M30T (0/67/1) 枚举值，包括默认 SN、默认相机类型~~ — ✅ 已完成（DeviceType.M30/M30T，PayloadType.M30_CAMERA/M30T_CAMERA）
+  2. ~~**PayloadType**：添加 M30_CAMERA(52-0-0)、M30T_CAMERA(53-0-0)、H20_CAMERA(42-0-0, compatible M350/M300)、H20T_CAMERA(43-0-0)、H20N_CAMERA(61-0-0)、H30_CAMERA(82-0-0)、H30T_CAMERA(83-0-0)，并补充 M350/M300 的 compatibleAircraft~~ — ✅ 已完成（相机枚举均已添加；通用云台负载 compatibleAircraft=null 反映多对多挂载关系，设计正确；UI 选择负载属待办项3）
+  3. ~~**新建 Pilot 模拟器 UI 页面**：支持机型选择 + 相机组合选择 + 第三方平台登录等交互~~ — ✅ 已完成（Pilot 模拟器页面已落地，含机型+相机组合选择）
+  4. ~~**OtherDroneOsdBuilder**：新建，supports M350_RTK/M300_RTK，OSD 字段集 = 基础字段 + `{type-subtype-gimbalindex}`（无 country/cameras，区分 M30/M30T 已有 M30DroneOsdBuilder）~~ — ✅ 已完成
+  5. ~~**OtherStateBuilder**：新建，supports M350_RTK/M300_RTK/M30/M30T，state 字段集 = Mavic 3 state + `{payload_index}.payload_index`~~ — ✅ 已完成（thermal_supported_palette_styles 已删除：Pilot 模式属性列表无此字段）
 
-#### TC-ONLINE-013：其他 RC Pilot 模式遥控器 OSD/state 字段集（待实现）
-- **状态**：待实现 — 属性列表已完整核实（无第2段），等 Pilot 模拟器页面落地后统一实现
+#### TC-ONLINE-013：其他 RC Pilot 模式遥控器 OSD/state 字段集（已核实，无差异）
+- **状态**：已核实 — DJI 官方文档确认 RC Plus 属性列表无 country 字段，现有 RcPlusOsdBuilder 实现正确；SMART_CONTROLLER_ENTERPRISE 枚举和前端选项已添加
 - **"其他RC"定义**（DJI Cloud API 产品支持文档 + 用户确认）：
   Pilot 上云支持的所有遥控器，除去 DJI RC Pro 行业版、DJI RC Plus 2 行业版，剩余遥控器（**用户确认包含 RC_PLUS**）：
   | 遥控器 | domain/type/sub_type | DeviceType 状态 | 搭配飞行器 |
   |---|---|---|---|
   | DJI RC Plus | 2/119/0 | 已有（RC_PLUS） | M350 RTK / M300 RTK / M30 / M30T |
-  | DJI 带屏遥控器行业版 | 2/56/0 | **缺失，待添加** | M300 RTK |
+  | DJI 带屏遥控器行业版 | 2/56/0 | 已有（SMART_CONTROLLER_ENTERPRISE） | M300 RTK |
 - **核实依据**：
   1. 用户提供的"其他机型-飞行器"遥控器设备属性列表（完整，pushMode=0 + pushMode=1）
   2. DJI Cloud API 产品支持文档：https://developer.dji.com/doc/cloud-api-tutorial/cn/overview/product-support.html
 - **OSD 字段（pushMode=0）核实**：
-  | 字段 | 属性列表 | 现有 RC_PLUS 实现（PilotControllerOsdBuilder） | 差异 |
+  | 字段 | 属性列表 | 现有 RC_PLUS 实现（RcPlusOsdBuilder） | 差异 |
   |---|---|---|---|
   | country | ✓ 有 | ✗ 无（仅 RC_PRO 上报） | **差异**：RC_PLUS 应上报 country |
   | capacity_percent | ✓ 有 | ✓ 有 | 一致 |
@@ -433,12 +481,9 @@ TDD（测试驱动开发）是本项目的标准开发方式：
   | firmware_version | ✓ 有 | ✓ 有 | 一致 |
   | cloud_control_auth | ✓ 有 | ✓ 有 | 一致 |
 - **差异汇总**：
-  1. **country 字段**：属性列表有，但现有 RC_PLUS 不上报（仅 RC_PRO 上报）。需修改 PilotControllerOsdBuilder 让 RC_PLUS 也上报 country。与之前核实 RC Plus 属性列表的结果（country 是 RC Pro 独有）不一致，**待实现时综合确认处理方式**。
-  2. **DJI 带屏遥控器行业版 (2/56/0)**：DeviceType 缺失，需添加枚举值（含默认 SN）。
-- **待办项（实现前置，与 TC-ONLINE-012 一起在 Pilot 模拟器页面落地后统一实现）**：
-  1. **DeviceType**：添加 DJI 带屏遥控器行业版 (2/56/0) 枚举值，包括默认 SN
-  2. **PilotControllerOsdBuilder**：确认 RC_PLUS 是否上报 country（待实现时综合确认）
-  3. 与 TC-ONLINE-012（其他机型-飞行器）一起统一实现
+  1. ~~**country 字段**：属性列表有，但现有 RC_PLUS 不上报（仅 RC_PRO 上报）~~ — ✅ 已核实：DJI 官方文档确认 RC Plus 属性列表**无 country 字段**（仅有 longitude/latitude/height/capacity_percent/wireless_link），现有 RcPlusOsdBuilder 实现正确，无需修改。
+  2. ~~**DJI 带屏遥控器行业版 (2/56/0)**：DeviceType 缺失，需添加枚举值~~ — ✅ 已完成（SMART_CONTROLLER_ENTERPRISE 枚举 + 前端选项 + 飞行器映射）
+- **待办项**：全部完成 ✓
 
 #### TC-ONLINE-014：其他 RC Pilot 模式 update_topo 字段集核实
 - **状态**：已核实 — 字段结构一致，值差异已记录
@@ -457,77 +502,89 @@ TDD（测试驱动开发）是本项目的标准开发方式：
 - **结论**：update_topo 字段结构与现有实现完全一致，无需修改。thing_version 的硬编码值 "3.0.0.0" 后续统一处理为可配参数。
 
 #### TC-ONLINE-015：其他 RC Pilot 模式直播功能核实
-- **状态**：已核实 — 4 个服务中 3 个一致，live_lens_change 差异保持现状
-- **核实依据**：用户提供的"其他机型-遥控器"直播功能属性列表
+- **状态**：已实现 — 4 个服务全部一致，live_lens_change 已改为按 video_id 精准切换
+- **核实依据**：DJI 官方文档 [RC Plus live.html](https://developer.dji.com/doc/cloud-api-tutorial/en/api-reference/pilot-to-cloud/mqtt/rc-plus/live.html)（英文版）
 - **核实对象**：[LiveStreamSimulator.java](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/handler/LiveStreamSimulator.java)
 - **服务核实**：
-  | 服务 | 属性列表 Data | 现有实现 | 差异 |
+  | 服务 | DJI 文档 Data | 现有实现 | 差异 |
   |---|---|---|---|
   | live_start_push | url_type, url, video_id, video_quality | ✓ 一致 | 无 |
   | live_stop_push | video_id | ✓ 一致 | 无 |
   | live_set_quality | video_id, video_quality | ✓ 一致 | 无 |
-  | live_lens_change | video_id, video_type | 仅 video_type（无 video_id） | **差异（保持现状）** |
-- **live_lens_change 差异详情**：
-  1. **video_id 缺失**：属性列表 Data 包含 video_id 和 video_type，现有 [handleLensChange](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/handler/LiveStreamSimulator.java#L357-L367) 仅解析 video_type（全局更新所有推流）。用户确认保持现状（Dock 模式的 live_lens_change 只有 video_type）。
-  2. **video_type 枚举值**：属性列表为 `{"normal":"默认","thermal":"红外","wide":"广角","zoom":"变焦"}`，现有实现注释为 `normal/zoom/wide/ir`。差异：属性列表用 `thermal`，现有实现用 `ir`。保持现状。
+  | live_lens_change | video_id, video_type | ✓ 一致（已改为按 video_id 精准切换） | 无 |
+- **live_lens_change 实现详情**：
+  1. **video_id 精准切换**：[handleLensChange](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/handler/LiveStreamSimulator.java#L390-L418) 解析 video_id + video_type，按 video_id 精准切换对应推流的 video_type（Pilot 模式）；无 video_id 时全局更新（Dock 模式兼容）。
+  2. **video_type 枚举值**（DJI 官方文档确认）：
+     - Dock3：`{"ir":"红外","normal":"默认","wide":"广角","zoom":"变焦"}` — [Dock3 live.html](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock3/live.html)
+     - RC Plus：`{"ir":"Infrared","normal":"Default","wide":"Wide-angle","zoom":"Zoom"}` — [RC Plus live.html](https://developer.dji.com/doc/cloud-api-tutorial/en/api-reference/pilot-to-cloud/mqtt/rc-plus/live.html)
+     - RC Plus 2：`{"thermal":"红外","wide":"广角","zoom":"变焦"}`（无 normal） — [RC Plus 2 live.html](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/pilot-to-cloud/mqtt/dji-rc-plus-2/live.html)
+     - **结论**：Dock 和 RC Plus 均用 `ir`，RC Plus 2 用 `thermal`（无 normal）。之前"属性列表用 thermal"的结论有误，已按 DJI 官方文档修正。
+  3. **Pilot 模式路由**：仅 RC_PLUS_2 容错返回（走 DRC Topic 的 drc_live_lens_change），其他 Pilot 机型（RC_PLUS/RC_PRO）进入 handleLensChange 处理（Service Topic，含 video_id）。
 - **services_reply 结构**：
   - live_lens_change：`{result: 0}`（Data 为 null，现有实现返回 `Map.of("result", 0)` ✓）
   - live_set_quality / live_stop_push / live_start_push：`{result: 0}` ✓
-- **结论**：3 个服务完全一致，live_lens_change 存在差异（待后续处理）。
-  - **待修改项**：handleLensChange 需改为解析 video_id，按 video_id 精准切换镜头（与 handleSetQuality 一致），同时修正注释 `ir` → `thermal`
-  - **当前问题**：现有实现全局更新 video_type，无法体现 Pilot 模式 live_lens_change 的 video_id 差异
+- **结论**：4 个服务全部一致，live_lens_change 已实现按 video_id 精准切换。路由方案经 DJI 官方文档核实正确。
 
 #### TC-ONLINE-016：DJI RC Plus 2 行业版 update_topo 差异核实
-- **状态**：已核实 — 发现重要差异，待后续处理
+- **状态**：已实现 — Topic 差异化（PilotTopicSchema）+ 字段差异化（buildUpdateTopoData/buildSubDeviceData/offline）
 - **核实依据**：用户提供的"DJI RC Plus 2 行业版"设备管理（update_topo）属性列表
-- **核实对象**：[PilotOnlineService.buildUpdateTopoData()](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/device/PilotOnlineService.java#L199-L226) + [offline()](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/device/PilotOnlineService.java#L163-L183) + [publishStatus()](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/device/PilotOnlineService.java#L273)
+- **核实对象**：[PilotTopicSchema](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/mqtt/PilotTopicSchema.java) + [PilotOnlineService.buildUpdateTopoData()](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/device/PilotOnlineService.java#L219-L241) + [buildSubDeviceData()](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/device/PilotOnlineService.java#L247-L262) + [offline()](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/device/PilotOnlineService.java#L178-L203)
 - **与其他 Pilot 机型（RC_PLUS/RC_PRO）的差异**：
-  | 维度 | 其他 Pilot 机型 | DJI RC Plus 2 行业版 | 现有实现（统一） |
+  | 维度 | 其他 Pilot 机型 | DJI RC Plus 2 行业版 | 实现方式 |
   |---|---|---|---|
-  | Topic | `sys/product/{gateway_sn}/status` | `thing/product/{gateway_sn}/status` | `sys/product/{sn}/status` |
-  | 网关设备 domain | ✓ 有 | ✗ 无 | ✓ 有 |
-  | 子设备 domain | ✓ 有 | ✗ 无 | ✓ 有 |
-  | 子设备 index | ✓ 有 | ✗ 无 | ✓ 有 |
+  | Topic | `sys/product/{sn}/status` | `thing/product/{sn}/status` | PilotTopicSchema.status() 按遥控器型号区分 |
+  | 网关设备 domain | ✓ 有 | ✗ 无 | buildUpdateTopoData() 条件判断 isRcPlus2 |
+  | 子设备 domain | ✓ 有 | ✗ 无 | buildSubDeviceData() 条件判断 isRcPlus2 |
+  | 子设备 index | ✓ 有 | ✗ 无 | buildSubDeviceData() 条件判断 isRcPlus2 |
 - **DJI RC Plus 2 行业版字段集**：
   - 网关设备：type、sub_type、device_secret、nonce、thing_version、sub_devices（无 domain）
   - 子设备：sn、type、sub_type、device_secret、nonce、thing_version（无 domain、无 index）
-- **现有实现问题**（对 DJI RC Plus 2 行业版）：
-  1. Topic 错误：用 `sys/product/{sn}/status`，应改为 `thing/product/{gateway_sn}/status`
-  2. 多了 domain：网关设备和子设备都不应包含 domain
-  3. 多了 index：子设备不应包含 index
-- **待修改项**：
-  1. **PilotOnlineService**：根据 controllerType 判断是否为 RC_PLUS_2，差异化构造 update_topo 报文
-     - RC_PLUS_2：Topic 用 `thing/product/{sn}/status`，网关设备和子设备不包含 domain，子设备不包含 index
-     - 其他机型：保持现状（`sys/product/{sn}/status` + domain + index）
-  2. **TopicConstants**：可能需要新增 `THING_STATUS` 常量（`thing/product/%s/status`）
-  3. **publishStatus()**：根据 controllerType 选择 Topic
-- **结论**：DJI RC Plus 2 行业版的 update_topo 协议与其他 Pilot 机型有重要差异（新一代遥控器协议变更），现有实现需差异化处理，待后续统一实现。
+- **实现详情**：
+  1. **PilotTopicSchema**：`status()` 返回 `thing/product/%s/status`（RC_PLUS_2）或 `sys/product/%s/status`（其他）；`statusReply()` 同理
+  2. **buildUpdateTopoData()**：`isRcPlus2` 为 true 时跳过 `domain` 字段
+  3. **buildSubDeviceData()**：`isRcPlus2` 为 true 时跳过 `domain` 和 `index` 字段
+  4. **offline()**：下线报文同样跳过 `domain` 字段（sub_devices 为空列表，无子设备字段问题）
+- **测试用例**：4 个（rcPlus2UpdateTopoOmitsDomainAndIndex / rcPlus2UpdateTopoUsesThingProductTopic / otherPilotUpdateTopoIncludesDomainAndIndex / otherPilotUpdateTopoUsesSysProductTopic）
+- **结论**：RC Plus 2 update_topo 差异化已完全实现，Topic 和字段差异均按 DJI 属性列表处理。
 
 #### TC-ONLINE-017：Pilot/Dock Topic 结构分离
-- **状态**：已实现 — Pilot 部分（5 处），Dock 部分待后续迁移
+- **状态**：已实现 — Pilot 部分（PilotTopicSchema）+ Dock 部分（DockTopicSchema，16 个 handler 全部迁移）+ TopicConstants 已删除
 - **背景**：Pilot 上云（RC 作为网关）和机场上云（机场作为网关）的 MQTT Topic 结构应分离，即使两者 100% 一样，也应从共同结构继承扩展
 - **实现方案**：接口 + 默认方法模式
   - [TopicSchema](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/mqtt/TopicSchema.java)（接口）：定义所有 Topic 通道，差异点（status/statusReply）为抽象方法，其他通道为默认实现（thing/product/%s/...）
   - [PilotTopicSchema](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/mqtt/PilotTopicSchema.java)（Pilot 上云）：实现 TopicSchema，按遥控器型号区分 status/statusReply
     - DJI RC Plus / RC Pro 行业版：sys/product/%s/status
     - DJI RC Plus 2 行业版：thing/product/%s/status
-  - DockTopicSchema（机场上云）：待后续创建
-- **已修改文件**：
-  - [PilotOnlineService.java](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/device/PilotOnlineService.java)：注入 TopicSchema 字段，构造函数创建 PilotTopicSchema，5 处 TopicConstants 引用改为 topicSchema
+  - [DockTopicSchema](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/mqtt/DockTopicSchema.java)（机场上云）：实现 TopicSchema，status/statusReply 使用 sys/product/%s/...，其他通道使用 TopicSchema 默认实现
+- **已迁移文件**（16 个 Dock handler + 1 个 OnlineService）：
+  - [DockOnlineService.java](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/device/DockOnlineService.java)：注入 DockTopicSchema，5 处 Topic 引用改为 dockTopicSchema
+  - [ServiceCommandHandler.java](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/handler/ServiceCommandHandler.java)：services/servicesReply 通道
+  - [DrcCommandHandler.java](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/handler/DrcCommandHandler.java)：drcDown/drcUp 通道
+  - [FlightCommandSimulator.java](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/handler/FlightCommandSimulator.java)：events 通道
+  - [WaylineTaskSimulator.java](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/handler/WaylineTaskSimulator.java)：events/requests/requestsReply 通道
+  - [HmsSimulator.java](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/handler/HmsSimulator.java)：events 通道
+  - [AirSenseSimulator.java](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/handler/AirSenseSimulator.java)：events 通道
+  - [AuthFlowHandler.java](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/handler/AuthFlowHandler.java)：state/events 通道
+  - [MediaUploadSimulator.java](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/handler/MediaUploadSimulator.java)：events/eventsReply 通道
+  - [OtaSimulator.java](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/handler/OtaSimulator.java)：events 通道
+  - [PropertySetHandler.java](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/handler/PropertySetHandler.java)：propertySet/propertySetReply 通道
+  - [RemoteDebugSimulator.java](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/handler/RemoteDebugSimulator.java)：events 通道
+  - [RemoteLogSimulator.java](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/handler/RemoteLogSimulator.java)：events 通道
+  - [FlightAreaSimulator.java](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/handler/FlightAreaSimulator.java)：events/requests/requestsReply 通道
+  - [PsdkSimulator.java](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/handler/PsdkSimulator.java)：events 通道
+  - [EsdkSimulator.java](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/handler/EsdkSimulator.java)：events 通道
+  - [PilotOnlineService.java](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/device/PilotOnlineService.java)：注入 PilotTopicSchema，5 处 Topic 引用改为 topicSchema
 - **Topic 通道差异**：
   | Topic 通道 | Dock 上云 | Pilot 上云（其他机型） | Pilot 上云（RC Plus 2） |
   |---|---|---|---|
   | status | sys/product/%s/status | sys/product/%s/status | thing/product/%s/status |
   | status_reply | sys/product/%s/status_reply | sys/product/%s/status_reply | thing/product/%s/status_reply |
   | osd/state/services/... | thing/product/%s/... | thing/product/%s/... | thing/product/%s/... |
-- **待办项**：
-  1. 创建 DockTopicSchema，将 Dock 上云相关类（约 45 处）从 TopicConstants 迁移到 DockTopicSchema
-  2. 废弃 TopicConstants（迁移完成后）
-  3. DJI RC Plus 2 行业版的 status_reply Topic 待真机验证（暂与 status 保持一致）
+- **结论**：TopicConstants 已删除，Pilot/Dock Topic 结构完全分离。所有 Dock handler 使用 DockTopicSchema（@Component 注入），PilotOnlineService 使用 PilotTopicSchema（构造函数按遥控器型号创建）。
 
 #### TC-ONLINE-018：DJI RC Plus 2 行业版直播功能差异核实
-- **状态**：已核实 — 发现重要差异，待后续处理
-- **核实依据**：用户提供的"DJI RC Plus 2 行业版"直播功能属性列表
+- **状态**：已实现 — 所有待修改项均已完成（drc_live_lens_change + live_lens_change 精准切换 + video_type 枚举核实 + WebRTC 推流 + controllerType 差异化路由）
+- **核实依据**：用户提供的"DJI RC Plus 2 行业版"直播功能属性列表 + DJI 官方文档
 - **核实对象**：[LiveStreamSimulator.java](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/handler/LiveStreamSimulator.java)
 - **与其他 Pilot 机型（RC_PLUS/RC_PRO）的差异**：
   | 维度 | 其他 Pilot 机型 | DJI RC Plus 2 行业版 |
@@ -543,20 +600,20 @@ TDD（测试驱动开发）是本项目的标准开发方式：
   - `live_stop_push`（services，video_id）
   - `live_start_push`（services，url_type + url + video_id + video_quality，但 url_type 多了 WebRTC）
 - **现有实现问题**：
-  1. LiveStreamSimulator 没有 `drc_live_lens_change` 处理（RC Plus 2 的设置直播镜头走 DRC 通道）
-  2. `live_lens_change` 差异已在 TC-ONLINE-015 记录（待修改为按 video_id 精准切换）
-  3. `live_start_push` 不支持 WebRTC（url_type=4）
-  4. `video_type` 枚举值不正确（现有用 `ir`，应为 `thermal`）
+  1. ~~LiveStreamSimulator 没有 `drc_live_lens_change` 处理~~ — ✅ 已实现 [handleDrcLensChange](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/handler/LiveStreamSimulator.java#L427)（Pilot 模式注册到 DRC 通道）
+  2. ~~`live_lens_change` 差异待修改为按 video_id 精准切换~~ — ✅ 已实现（TC-ONLINE-015）
+  3. ~~`live_start_push` 不支持 WebRTC（url_type=4）~~ — ✅ 已实现（[FfmpegWhipPusher](file:///d:/99.Code/hivemind-simulator/src/main/java/ltd/cdmi/hivemind/simulator/handler/FfmpegWhipPusher.java) 支持 WHIP 推流 + WHIP 降级 RTMP；测试覆盖 TC-LIVE-016/017/018）
+  4. ~~`video_type` 枚举值不正确~~ — ✅ 已核实（DJI 官方文档）：Dock 和 RC Plus 用 `ir`（[Dock3 live.html](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock3/live.html) + [RC Plus live.html](https://developer.dji.com/doc/cloud-api-tutorial/en/api-reference/pilot-to-cloud/mqtt/rc-plus/live.html)），RC Plus 2 用 `thermal`（[RC Plus 2 live.html](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/pilot-to-cloud/mqtt/dji-rc-plus-2/live.html)，无 normal），各自正确
 - **关键差异分析**：
   - DJI RC Plus 2 行业版的"设置直播镜头"走 **DRC 通道**（`drc/down` + `drc/up`），而非 services 通道
   - 使用 `payload_index`（相机枚举）而非 `video_id`（直播视频流 ID）
   - `video_type` 无 `normal`（只有 thermal/wide/zoom）
 - **待修改项**（后续统一实现）：
-  1. **LiveStreamSimulator**：新增 `drc_live_lens_change` 处理（监听 `drc/down`，回复 `drc/up`，解析 payload_index + video_type）
-  2. **live_start_push**：支持 WebRTC（url_type=4）
-  3. **video_type 枚举**：修正 `ir` → `thermal`（与 TC-ONLINE-015 合并处理）
-  4. 根据 controllerType 判断是否为 RC_PLUS_2，差异化处理直播镜头切换指令
-- **结论**：DJI RC Plus 2 行业版的直播功能与其他 Pilot 机型有重要差异（DRC 通道 + payload_index + WebRTC），现有实现需差异化处理，待后续统一实现。
+  1. ~~LiveStreamSimulator 新增 `drc_live_lens_change` 处理~~ — ✅ 已实现
+  2. ~~**live_start_push**：支持 WebRTC（url_type=4）~~ — ✅ 已实现（FfmpegWhipPusher WHIP 推流 + 降级 RTMP，测试 TC-LIVE-016/017/018）
+  3. ~~`video_type` 枚举修正~~ — ✅ 已核实正确
+  4. ~~根据 controllerType 判断是否为 RC_PLUS_2，差异化处理直播镜头切换指令~~ — ✅ 已实现（仅 RC_PLUS_2 容错返回，其他 Pilot 机型进入 handleLensChange）
+- **结论**：DJI RC Plus 2 行业版直播功能的所有待修改项均已实现。WebRTC 推流通过 FfmpegWhipPusher 支持 WHIP muxer（ffmpeg ≥8.0 编译 --enable-muxer=whip），不支持时自动降级 RTMP（ZLM 做 RTMP→WebRTC 转换）。
 
 ### 2.4 配置管理
 
@@ -1331,7 +1388,7 @@ TDD（测试驱动开发）是本项目的标准开发方式：
 - **那么**：`log.warn` 输出当前 Dock 类型不支持该命令，返回 `result=1`
 - **那么**：诊断码为 `PLATFORM_DOCK_CAPABILITY_MISMATCH`（P-8）
 - **平台异常推断**：平台应知 Dock 能力，下发了不支持的指令
-- **实现状态**：已在阶段 1 实现（TC-WAYLINE-013/014/015），阶段 2 补充诊断码日志
+- **实现状态**：已实现（TC-WAYLINE-013/014/015 基础逻辑 + P-8 诊断码日志）
 
 #### TC-DIAG-011：未覆盖指令检测（S-2）
 - **给定**：模拟器收到 services 消息，method 不在 `WAYLINE_METHODS`/`LIVE_METHODS`/`MEDIA_METHODS`/`DRC_METHODS`/`FLY_METHODS` 等已知集合中
@@ -1876,11 +1933,11 @@ TDD（测试驱动开发）是本项目的标准开发方式：
 - **那么**：返回拒绝（success=false），提示「避障记录上报仅 Dock3 支持」
 - **核实依据**：[Dock1 drc.html](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock1/drc.html) 和 [Dock2 drc.html](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock2/drc.html) 均无 obstacle_avoidance_notify 事件
 
-#### TC-FLY-015：Dock1 才支持 poi_status_notify
+#### TC-FLY-015：Dock1/Pilot 才支持 poi_status_notify
 - **给定**：dock-type=DOCK2 或 DOCK3
 - **当**：通过 REST API 触发 POI 环绕状态通知
-- **那么**：返回拒绝（success=false），提示「POI 环绕状态通知仅 Dock1 支持」
-- **核实依据**：[Dock2 drc.html](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock2/drc.html) 和 [Dock3 drc.html](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock3/drc.html) 均无 poi_status_notify 事件
+- **那么**：返回拒绝（success=false），提示「POI 环绕状态通知仅 Dock1/Pilot 支持」
+- **核实依据**：[Dock2 drc.html](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock2/drc.html) 和 [Dock3 drc.html](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock3/drc.html) 均无 poi_status_notify 事件；[Pilot drc.html](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/pilot-to-cloud/mqtt/dji-rc-plus-2/drc.html#飞行控制-poi-环绕状态信息通知) 有 poi_status_notify 事件
 
 #### TC-FLY-016：drc_status_notify 已废弃不实现
 - **给定**：任意 Dock 版本
@@ -1928,26 +1985,30 @@ TDD（测试驱动开发）是本项目的标准开发方式：
 - **那么**：不发 events 进度事件（同步指令）
 - **核实依据**：[Dock3 drc.html 负载控制权抢夺](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock3/drc.html#负载控制权抢夺) 回复 data 仅含 result
 
-#### TC-FLY-022：poi_mode_enter 指令处理（Dock1 专属）
-- **给定**：Dock1 模式下，平台通过 services 下发 `{"method":"poi_mode_enter","data":{"latitude":12.23,"longitude":12.23,"height":100}}`
+#### TC-FLY-022：poi_mode_enter 指令处理（Dock1/Pilot 专属）
+- **给定**：Dock1 或 Pilot 模式下，平台通过 services 下发 `{"method":"poi_mode_enter","data":{"latitude":12.23,"longitude":12.23,"height":100}}`
 - **当**：模拟器收到指令
 - **那么**：立即回 `services_reply`，method=`poi_mode_enter`，data.result=0（无 output）
 - **那么**：触发 `poi_status_notify` 事件，status=`in_progress`，reason=0
-- **核实依据**：[Dock1 drc.html 飞行控制-进入POI环绕模式](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock1/drc.html#飞行控制-进入-poi-环绕模式) 回复 data 仅含 result
+- **那么**：Dock2/Dock3 模式下返回 result=1（不支持 POI），不触发事件
+- **核实依据**：[Dock1 drc.html 飞行控制-进入POI环绕模式](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock1/drc.html#飞行控制-进入-poi-环绕模式) 回复 data 仅含 result；[Pilot drc.html 飞行控制-进入POI环绕模式](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/pilot-to-cloud/mqtt/dji-rc-plus-2/drc.html#飞行控制-进入-poi-环绕模式) 同样走 services 通道
+- **错误后果**：Dock2/Dock3 误实现 POI 会导致协议不一致
 
-#### TC-FLY-023：poi_mode_exit 指令处理（Dock1 专属）
-- **给定**：Dock1 模式下，平台通过 services 下发 `{"method":"poi_mode_exit","data":{}}`
+#### TC-FLY-023：poi_mode_exit 指令处理（Dock1/Pilot 专属）
+- **给定**：Dock1 或 Pilot 模式下，平台通过 services 下发 `{"method":"poi_mode_exit","data":{}}`
 - **当**：模拟器收到指令
 - **那么**：立即回 `services_reply`，method=`poi_mode_exit`，data.result=0（无 output）
 - **那么**：触发 `poi_status_notify` 事件，status=`ok`，reason=0
-- **核实依据**：[Dock1 drc.html 飞行控制-退出POI环绕模式](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock1/drc.html#飞行控制-退出-poi-环绕模式) 回复 data 仅含 result
+- **那么**：Dock2/Dock3 模式下返回 result=1（不支持 POI），不触发事件
+- **核实依据**：[Dock1 drc.html 飞行控制-退出POI环绕模式](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock1/drc.html#飞行控制-退出-poi-环绕模式) 回复 data 仅含 result；[Pilot drc.html 飞行控制-退出POI环绕模式](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/pilot-to-cloud/mqtt/dji-rc-plus-2/drc.html#飞行控制-退出-poi-环绕模式)
 
-#### TC-FLY-024：poi_circle_speed_set 指令处理（Dock1 专属）
-- **给定**：Dock1 模式下，平台通过 services 下发 `{"method":"poi_circle_speed_set","data":{"circle_speed":5.2}}`
+#### TC-FLY-024：poi_circle_speed_set 指令处理（Dock1/Pilot 专属）
+- **给定**：Dock1 或 Pilot 模式下，平台通过 services 下发 `{"method":"poi_circle_speed_set","data":{"circle_speed":5.2}}`
 - **当**：模拟器收到指令
 - **那么**：立即回 `services_reply`，method=`poi_circle_speed_set`，data.result=0（无 output）
 - **那么**：不发 events 进度事件（同步指令）
-- **核实依据**：[Dock1 drc.html 飞行控制-POI环绕速度设置](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock1/drc.html#飞行控制-poi-环绕速度设置) 回复 data 仅含 result
+- **那么**：Dock2/Dock3 模式下返回 result=1（不支持 POI）
+- **核实依据**：[Dock1 drc.html 飞行控制-POI环绕速度设置](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock1/drc.html#飞行控制-poi-环绕速度设置) 回复 data 仅含 result；[Pilot drc.html 飞行控制-POI环绕速度设置](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/pilot-to-cloud/mqtt/dji-rc-plus-2/drc.html#飞行控制-poi-环绕速度设置)
 
 #### TC-FLY-025：飞行参数用于真实轨迹模拟
 - **给定**：平台通过 takeoff_to_point 下发 `{"security_takeoff_height":80,"rth_altitude":100,"rc_lost_action":2,"simulate_mission":{"is_enable":0}}`
@@ -2667,11 +2728,11 @@ TDD（测试驱动开发）是本项目的标准开发方式：
 - **那么**：`data` 不含 `home_dock_sn` 和 `multi_dock_home_info`（Dock1 不支持蛙跳）
 - **核实依据**：[Dock3 wayline.html return_home_info](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock3/wayline.html) 有 multi_dock_home_info 字段；[Dock1 wayline.html return_home_info](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock1/wayline.html) 无
 
-#### TC-WAYLINE-017：flighttask_ready 事件（任务就绪通知，未实现）
+#### TC-WAYLINE-017：flighttask_ready 事件（任务就绪通知）
 - **给定**：机场准备就绪，可接受任务
 - **当**：模拟器上报 `flighttask_ready`
 - **那么**：事件含 `method=flighttask_ready`、`data.flight_ids`（数组，满足就绪条件的任务 ID 集合）
-- **说明**：当前未实现，作为后续实现依据
+- **实现状态**：已实现（WaylineTaskSimulator.publishFlighttaskReady + REST API /api/wayline/flighttask-ready）
 - **核实依据**：[Dock3 wayline.html 任务就绪通知](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock3/wayline.html) Event 结构
 
 #### TC-WAYLINE-018：device_exit_homing_notify 事件（返航退出状态通知）
@@ -2683,12 +2744,12 @@ TDD（测试驱动开发）是本项目的标准开发方式：
 - **字段决策（M-2 待真机验证）**：`reason` 字段 DJI 文档定义为 enum_int，但 Example 中为字符串 `"0"`。当前按字段定义用 int 类型，待真机验证
 - **核实依据**：[Dock1/Dock2/Dock3 wayline.html 设备返航退出状态通知](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock1/wayline.html) Event 结构
 
-#### TC-WAYLINE-019：in_flight_wayline_progress 事件（空中航线状态，Dock2/3，未实现）
+#### TC-WAYLINE-019：in_flight_wayline_progress 事件（空中航线状态，Dock2/3）
 - **给定**：dock-type=DOCK2 或 DOCK3，空中航线任务执行中
 - **当**：模拟器上报 `in_flight_wayline_progress`
 - **那么**：事件含 `method=in_flight_wayline_progress`、`data.in_flight_wayline_id`/`data.progress.percent`/`data.status`/`data.result`/`data.way_point_index`
 - **那么**：`status` 枚举：1=上传中/2=上传成功/3=执行中/4=暂停/5=取消/6=成功/7=失败/8=超时
-- **说明**：当前未实现，作为后续实现依据
+- **实现状态**：已实现（WaylineTaskSimulator.publishInFlightWaylineProgress + REST API /api/wayline/in-flight-progress）
 - **核实依据**：[Dock3 wayline.html 空中下发航线状态上报](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock3/wayline.html) Event 结构
 
 #### TC-WAYLINE-020：flight_setup_exception_notify 事件（准备异常通知，Dock1 专有）

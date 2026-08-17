@@ -19,6 +19,7 @@ import ltd.cdmi.hivemind.simulator.config.LiveConfigStore;
 import ltd.cdmi.hivemind.simulator.config.MqttProperties;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -48,12 +49,14 @@ class MopClientTest {
                 new SimulatorProperties.Media("", false, 0, false, 0),
                 null,
                 null,
+                null,
                 null
         );
     }
 
     // ==================== 连接状态 ====================
 
+    @DisplayName("补充测试：初始连接状态为 false")
     @Test
     void isConnectedReturnsFalseInitially() {
         MopClient mopClient = new MopClient(newRuntimeConfigWithEmptyMop());
@@ -62,6 +65,7 @@ class MopClientTest {
 
     // ==================== connect：未配置 host 时跳过连接 ====================
 
+    @DisplayName("补充测试：host 未配置时跳过连接")
     @Test
     void connectSkipsWhenHostNotConfigured() {
         RuntimeConfig rc = newRuntimeConfigWithEmptyMop();
@@ -72,6 +76,7 @@ class MopClientTest {
         assertFalse(mopClient.isConnected(), "host 未配置时不应建立连接");
     }
 
+    @DisplayName("补充测试：host 为空白时跳过连接")
     @Test
     void connectSkipsWhenHostBlank() {
         RuntimeConfig rc = newRuntimeConfigWithEmptyMop();
@@ -83,6 +88,7 @@ class MopClientTest {
 
     // ==================== sendMessage：未连接时返回失败 ====================
 
+    @DisplayName("补充测试：未连接时 sendMessage 返回 false")
     @Test
     void sendMessageReturnsFalseWhenNotConnected() {
         MopClient mopClient = new MopClient(newRuntimeConfigWithEmptyMop());
@@ -92,6 +98,7 @@ class MopClientTest {
 
     // ==================== disconnect：安全性 ====================
 
+    @DisplayName("补充测试：未连接时 disconnect 安全")
     @Test
     void disconnectIsSafeWhenNeverConnected() {
         MopClient mopClient = new MopClient(newRuntimeConfigWithEmptyMop());

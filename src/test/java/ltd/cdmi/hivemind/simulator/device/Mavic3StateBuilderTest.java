@@ -15,8 +15,12 @@
 
 package ltd.cdmi.hivemind.simulator.device;
 
+import ltd.cdmi.dji.cloudapi.sdk.model.DroneModel;
+
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
+import ltd.cdmi.hivemind.simulator.device.osd.Mavic3StateBuilder;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -43,14 +47,16 @@ class Mavic3StateBuilderTest {
         Mockito.when(runtimeConfig.getLocationLongitude()).thenReturn(113.9);
     }
 
+    @DisplayName("TC-ONLINE-010：Mavic 3 Pilot 模式 drone state 字段集 — supports MAVIC_3E/3T")
     @Test
     void supportsMavic3EAnd3T() {
-        assertTrue(builder.supports(DeviceType.MAVIC_3E));
-        assertTrue(builder.supports(DeviceType.MAVIC_3T));
-        assertFalse(builder.supports(DeviceType.M4E));
-        assertFalse(builder.supports(DeviceType.M400));
+        assertTrue(builder.supports(DroneModel.MAVIC_3E));
+        assertTrue(builder.supports(DroneModel.MAVIC_3T));
+        assertFalse(builder.supports(DroneModel.M4E));
+        assertFalse(builder.supports(DroneModel.M400));
     }
 
+    @DisplayName("TC-ONLINE-010：Mavic 3 Pilot 模式 drone state 字段集 — pushMode=1 字段完整覆盖")
     @Test
     void buildDroneStateContainsAllPushMode1Fields() {
         Map<String, Object> data = builder.buildDroneState(runtimeConfig);
@@ -68,6 +74,7 @@ class Mavic3StateBuilderTest {
         assertTrue(data.containsKey("camera_watermark_settings"));
     }
 
+    @DisplayName("TC-ONLINE-010：Mavic 3 Pilot 模式 drone state 字段集 — 不含 Matrice 4 特有字段")
     @Test
     void buildDroneStateExcludesMatrice4SpecificFields() {
         Map<String, Object> data = builder.buildDroneState(runtimeConfig);
@@ -80,6 +87,7 @@ class Mavic3StateBuilderTest {
         assertFalse(data.containsKey("commander_mode_lost_action"), "Mavic 3 属性列表未列 commander_mode_lost_action");
     }
 
+    @DisplayName("TC-ONLINE-010：Mavic 3 Pilot 模式 drone state 字段集 — home_latitude/home_longitude 来自 RuntimeConfig")
     @Test
     void homeLatLonFromRuntimeConfig() {
         Map<String, Object> data = builder.buildDroneState(runtimeConfig);

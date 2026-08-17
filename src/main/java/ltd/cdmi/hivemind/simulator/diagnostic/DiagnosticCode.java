@@ -36,13 +36,13 @@ public enum DiagnosticCode {
     PLATFORM_AUTH_FAILED("P-3", "凭证错误", "platform"),
     /** License 不匹配（config 回复的 app_license 与本地配置不符） */
     PLATFORM_LICENSE_MISMATCH("P-4", "License 不匹配", "platform"),
-    /** JSON 格式错误（平台下发非合法 JSON）—— 阶段 2 实现 */
+    /** JSON 格式错误（平台下发非合法 JSON） */
     PLATFORM_JSON_FORMAT_ERROR("P-5", "JSON 格式错误", "platform"),
-    /** 必填字段缺失（缺 tid/bid/method/data）—— 阶段 2 实现 */
+    /** 必填字段缺失（缺 tid/bid/method/data） */
     PLATFORM_FIELD_MISSING("P-6", "必填字段缺失", "platform"),
-    /** 字段类型错误（method 非字符串、data 非对象等）—— 阶段 2 实现 */
+    /** 字段类型错误（method 非字符串、data 非对象等） */
     PLATFORM_FIELD_TYPE_ERROR("P-7", "字段类型错误", "platform"),
-    /** Dock 能力不匹配（平台给当前 Dock 下发了不支持的指令）—— 阶段 2 实现 */
+    /** Dock 能力不匹配（平台给当前 Dock 下发了不支持的指令） */
     PLATFORM_DOCK_CAPABILITY_MISMATCH("P-8", "Dock 能力不匹配", "platform"),
     /** 平台调用了废弃接口（DJI 文档明确标注"已废弃"的下行接口，平台不应再调用） */
     PLATFORM_DEPRECATED_API_CALLED("P-9", "平台调用废弃接口", "platform"),
@@ -52,9 +52,9 @@ public enum DiagnosticCode {
     // ==================== S 类：模拟器问题 ====================
     /** MQTT 未连接（模拟器未建立 MQTT 连接） */
     SIMULATOR_MQTT_NOT_CONNECTED("S-1", "MQTT 未连接", "simulator"),
-    /** 未覆盖指令（method 在 DJI 规范存在但模拟器无 handler）—— 阶段 2 实现 */
+    /** 未覆盖指令（method 在 DJI 规范存在但模拟器无 handler） */
     SIMULATOR_METHOD_NOT_IMPLEMENTED("S-2", "未覆盖指令", "simulator"),
-    /** 解析异常（NPE/ClassCastException 等模拟器内部 Bug）—— 阶段 2 实现 */
+    /** 解析异常（NPE/ClassCastException 等模拟器内部 Bug） */
     SIMULATOR_PARSE_BUG("S-3", "解析异常（疑似Bug）", "simulator"),
     /** FFmpeg 不支持 WHIP 推流（本机 ffmpeg 未启用 --enable-muxer=whip），降级为协议模拟 */
     SIMULATOR_FFMPEG_WHIP_NOT_SUPPORTED("S-4", "FFmpeg不支持WHIP", "simulator"),

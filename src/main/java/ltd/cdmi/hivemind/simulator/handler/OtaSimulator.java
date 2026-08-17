@@ -16,6 +16,11 @@
 package ltd.cdmi.hivemind.simulator.handler;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import ltd.cdmi.dji.cloudapi.sdk.codec.MessageCodec;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.firmware.OtaCreateRequest;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.envelope.EventEnvelope;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.EventMethod;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.ServiceMethod;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.mqtt.MqttClientManager;
 import ltd.cdmi.hivemind.simulator.mqtt.DockTopicSchema;
@@ -58,7 +63,7 @@ public class OtaSimulator {
     private static final Logger log = LoggerFactory.getLogger(OtaSimulator.class);
 
     /** 固件升级同步 Service 指令集 */
-    private static final Set<String> OTA_SERVICE_METHODS = Set.of("ota_create");
+    private static final Set<String> OTA_SERVICE_METHODS = Set.of(ServiceMethod.OTA_CREATE.methodName());
 
     /** 进度模拟间隔（秒） */
     private static final long PROGRESS_INTERVAL_SECONDS = 2;
@@ -103,10 +108,10 @@ public class OtaSimulator {
 
     /** 处理固件升级 Service 指令，返回 services_reply 的 output */
     public Map<String, Object> handleService(String method, JsonNode data) {
-        return switch (method) {
-            case "ota_create" -> handleOtaCreate(data);
-            default -> throw new IllegalArgumentException("Unsupported OTA service method: " + method);
-        };
+        if (ServiceMethod.OTA_CREATE.methodName().equals(method)) {
+            return handleOtaCreate(data);
+        }
+        throw new IllegalArgumentException("Unsupported OTA service method: " + method);
     }
 
     /**
@@ -118,28 +123,29 @@ public class OtaSimulator {
         // 取消已有升级任务
         cancelUpgradeTask();
 
-        // 解析设备列表
+        // 使用 SDK POJO 解析设备列表
+        OtaCreateRequest req = MessageCodec.fromJson(data.toString(), OtaCreateRequest.class);
+
         currentUpgradeDevices.clear();
-        JsonNode devicesNode = data.path("devices");
-        if (devicesNode.isArray()) {
-            for (JsonNode deviceNode : devicesNode) {
-                Map<String, Object> device = new LinkedHashMap<>();
-                device.put("sn", deviceNode.path("sn").asText());
-                device.put("product_version", deviceNode.path("product_version").asText());
-                device.put("firmware_upgrade_type", deviceNode.path("firmware_upgrade_type").asInt());
-                if (deviceNode.has("file_url")) {
-                    device.put("file_url", deviceNode.path("file_url").asText());
+        if (req.devices() != null) {
+            for (OtaCreateRequest.OtaDevice device : req.devices()) {
+                Map<String, Object> deviceMap = new LinkedHashMap<>();
+                deviceMap.put("sn", device.sn());
+                deviceMap.put("product_version", device.productVersion());
+                deviceMap.put("firmware_upgrade_type", device.firmwareUpgradeType());
+                if (device.fileUrl() != null) {
+                    deviceMap.put("file_url", device.fileUrl());
                 }
-                if (deviceNode.has("md5")) {
-                    device.put("md5", deviceNode.path("md5").asText());
+                if (device.md5() != null) {
+                    deviceMap.put("md5", device.md5());
                 }
-                if (deviceNode.has("file_size")) {
-                    device.put("file_size", deviceNode.path("file_size").asLong());
+                if (device.fileSize() != null) {
+                    deviceMap.put("file_size", device.fileSize());
                 }
-                if (deviceNode.has("file_name")) {
-                    device.put("file_name", deviceNode.path("file_name").asText());
+                if (device.fileName() != null) {
+                    deviceMap.put("file_name", device.fileName());
                 }
-                currentUpgradeDevices.add(device);
+                currentUpgradeDevices.add(deviceMap);
             }
         }
 
@@ -214,7 +220,7 @@ public class OtaSimulator {
             data.put("result", 0);
             data.put("output", output);
 
-            publishEvent("ota_progress", data);
+            publishEvent(EventMethod.OTA_PROGRESS, data);
             log.info("ota_progress 已上报: status={}, current_step={}, percent={}", status, currentStep, percent);
         } catch (Exception e) {
             log.error("ota_progress 上报失败", e);
@@ -240,18 +246,15 @@ public class OtaSimulator {
         return TriggerResult.ok();
     }
 
-    private void publishEvent(String method, Map<String, Object> data) {
-        Map<String, Object> envelope = new LinkedHashMap<>();
-        envelope.put("bid", UUID.randomUUID().toString());
-        envelope.put("tid", UUID.randomUUID().toString());
-        envelope.put("timestamp", System.currentTimeMillis());
-        envelope.put("need_reply", 0);
-        envelope.put("gateway", runtimeConfig.getDockSn());
-        envelope.put("method", method);
-        envelope.put("data", data);
+    private void publishEvent(EventMethod method, Map<String, Object> data) {
+        EventEnvelope envelope = EventEnvelope.of(
+                UUID.randomUUID().toString(),
+                UUID.randomUUID().toString(),
+                System.currentTimeMillis(),
+                method, data, runtimeConfig.getDockSn());
 
         String topic = dockTopicSchema.topic(dockTopicSchema.events(), runtimeConfig.getDockSn());
-        mqtt.publishJson(topic, envelope);
+        mqtt.publish(topic, MessageCodec.toJson(envelope));
     }
 
     // ==================== REST API 辅助 ====================

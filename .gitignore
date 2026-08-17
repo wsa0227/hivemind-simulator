@@ -8,4 +8,5 @@ target/
 .DS_Store
 *.log
 AGENTS.md
+.trae-html-share-packages/
 .codeup/

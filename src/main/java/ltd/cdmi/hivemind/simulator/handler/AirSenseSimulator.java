@@ -15,6 +15,9 @@
 
 package ltd.cdmi.hivemind.simulator.handler;
 
+import ltd.cdmi.dji.cloudapi.sdk.codec.MessageCodec;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.envelope.EventEnvelope;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.EventMethod;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.mqtt.MqttClientManager;
 import ltd.cdmi.hivemind.simulator.mqtt.DockTopicSchema;
@@ -83,17 +86,14 @@ public class AirSenseSimulator {
                 .map(this::buildAlertItem)
                 .toList();
 
-        Map<String, Object> envelope = new LinkedHashMap<>();
-        envelope.put("bid", UUID.randomUUID().toString());
-        envelope.put("tid", UUID.randomUUID().toString());
-        envelope.put("timestamp", System.currentTimeMillis());
-        envelope.put("need_reply", 1);  // AirSense 事件需平台回复
-        envelope.put("gateway", runtimeConfig.getDockSn());
-        envelope.put("method", "airsense_warning");
-        envelope.put("data", data);  // data 直接是数组
+        EventEnvelope envelope = EventEnvelope.of(
+                UUID.randomUUID().toString(),
+                UUID.randomUUID().toString(),
+                System.currentTimeMillis(),
+                EventMethod.AIRSENSE_WARNING, data, runtimeConfig.getDockSn());
 
         String topic = dockTopicSchema.topic(dockTopicSchema.events(), runtimeConfig.getDockSn());
-        mqtt.publishJson(topic, envelope);
+        mqtt.publish(topic, MessageCodec.toJson(envelope));
     }
 
     /**

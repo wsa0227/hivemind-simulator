@@ -17,6 +17,8 @@ package ltd.cdmi.hivemind.simulator.mqtt;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.topic.TopicChannel;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.topic.TopicTemplate;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticCode;
 import org.eclipse.paho.client.mqttv3.IMqttDeliveryToken;
 import org.eclipse.paho.client.mqttv3.MqttCallbackExtended;
@@ -43,28 +45,38 @@ import java.util.UUID;
 /**
  * 监控器 MQTT 客户端：作为第三方监控端连接到 DJI Cloud API 平台。
  * <p>独立于 {@link MqttClientManager}，订阅通配符 topic 监听所有设备的数据。</p>
+ * <p>订阅 topic 由 SDK {@link TopicTemplate} 常量派生：将 {@code %s} 替换为 MQTT 通配符 {@code +}，
+ * 即可匹配所有设备 SN。topic 格式与 SDK 定义保持一致。</p>
  */
 public class MonitorMqttClient implements MqttCallbackExtended {
 
     private static final Logger log = LoggerFactory.getLogger(MonitorMqttClient.class);
 
-    /** 监控器订阅的通配符 topic（匹配所有设备 SN） */
+    /**
+     * 将 topic 模板中的 {@code %s} 占位符替换为 MQTT 单层通配符 {@code +}，
+     * 用于订阅所有设备 SN 的同名通道。
+     */
+    private static String wildcard(String template) {
+        return template.replace("%s", "+");
+    }
+
+    /** 监控器订阅的通配符 topic（匹配所有设备 SN），由 SDK TopicTemplate 常量派生 */
     private static final String[] SUBSCRIBE_TOPICS = {
         // 上行（设备→云）
-        "sys/product/+/status",           // 设备上下线（update_topo）
-        "thing/product/+/osd",            // OSD 遥测数据
-        "thing/product/+/state",          // 状态变更
-        "thing/product/+/drc/up",         // DRC 上行通道（DRC 模式状态推送）
-        "thing/product/+/events",         // 事件上报
-        "thing/product/+/requests",       // 设备请求
-        "thing/product/+/services_reply", // 服务指令回复
-        "thing/product/+/property/set_reply", // 属性设置回复
+        wildcard(TopicTemplate.STATUS),           // 设备上下线（update_topo，机场上云用 sys/product）
+        wildcard(TopicTemplate.OSD),              // OSD 遥测数据
+        wildcard(TopicTemplate.STATE),            // 状态变更
+        wildcard(TopicTemplate.DRC_UP),           // DRC 上行通道（DRC 模式状态推送）
+        wildcard(TopicTemplate.EVENTS),           // 事件上报
+        wildcard(TopicTemplate.REQUESTS),         // 设备请求
+        wildcard(TopicTemplate.SERVICES_REPLY),   // 服务指令回复
+        wildcard(TopicTemplate.PROPERTY_SET_REPLY), // 属性设置回复
         // 下行（云→设备）
-        "sys/product/+/status_reply",     // 拓扑回复
-        "thing/product/+/services",       // 服务指令下发
-        "thing/product/+/property/set",   // 属性设置下发
-        "thing/product/+/events_reply",   // 事件回复
-        "thing/product/+/requests_reply", // 请求回复
+        wildcard(TopicTemplate.STATUS_REPLY),     // 拓扑回复（机场上云用 sys/product）
+        wildcard(TopicTemplate.SERVICES),         // 服务指令下发
+        wildcard(TopicTemplate.PROPERTY_SET),     // 属性设置下发
+        wildcard(TopicTemplate.EVENTS_REPLY),     // 事件回复
+        wildcard(TopicTemplate.REQUESTS_REPLY),   // 请求回复
     };
 
     private final ObjectMapper objectMapper;
@@ -237,11 +249,13 @@ public class MonitorMqttClient implements MqttCallbackExtended {
      * </ul>
      */
     private String inferDirection(String topic) {
-        if (topic.endsWith("/services")
-                || topic.endsWith("/property/set")
-                || topic.endsWith("/events_reply")
-                || topic.endsWith("/requests_reply")
-                || topic.endsWith("/status_reply")) {
+        // 下行通道（平台 → 设备）：services / property/set / events_reply / requests_reply / status_reply
+        // 使用 SDK TopicChannel.suffix() 常量保证与协议定义一致
+        if (topic.endsWith("/" + TopicChannel.SERVICES.suffix())
+                || topic.endsWith("/" + TopicChannel.PROPERTY_SET.suffix())
+                || topic.endsWith("/" + TopicChannel.EVENTS_REPLY.suffix())
+                || topic.endsWith("/" + TopicChannel.REQUESTS_REPLY.suffix())
+                || topic.endsWith("/" + TopicChannel.STATUS_REPLY.suffix())) {
             return "send"; // 平台 → 设备
         }
         return "recv"; // 设备 → 平台

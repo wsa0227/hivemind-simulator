@@ -22,10 +22,11 @@ import ltd.cdmi.hivemind.simulator.config.MqttProperties;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
 import ltd.cdmi.hivemind.simulator.device.DeviceState;
-import ltd.cdmi.hivemind.simulator.device.DeviceType;
+import ltd.cdmi.dji.cloudapi.sdk.model.DockModel;
 import ltd.cdmi.hivemind.simulator.handler.RemoteDebugSimulator;
 import ltd.cdmi.hivemind.simulator.mqtt.DockTopicSchema;
 import ltd.cdmi.hivemind.simulator.mqtt.MqttClientManager;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
@@ -52,6 +53,7 @@ class RemoteDebugSimulatorTest {
                 new SimulatorProperties.Media("", false, 0, false, 0),
                 null,
                 null,
+                null,
                 null
         );
     }
@@ -60,7 +62,7 @@ class RemoteDebugSimulatorTest {
         return new MqttProperties("127.0.0.1", 1883, "user", "pass", "sim-", "mon-");
     }
 
-    private RemoteDebugSimulator createSimulator(DeviceType dockType, DeviceState state, MqttClientManager mqtt) {
+    private RemoteDebugSimulator createSimulator(DockModel dockType, DeviceState state, MqttClientManager mqtt) {
         RuntimeConfig runtimeConfig = new RuntimeConfig(testMqttProps(), testProps(), new LiveConfigStore());
         runtimeConfig.setDockType(dockType);
         return new RemoteDebugSimulator(mqtt, state, runtimeConfig, new DockTopicSchema());
@@ -72,12 +74,13 @@ class RemoteDebugSimulatorTest {
      * TC-RD-007：Dock1 putter_open → services_reply result=0 + 进度事件 in_progress→ok + putterExpanded=true
      */
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-RD-007：putter_open / putter_close 状态同步（仅 Dock1）")
     @Test
     void dock1_putterOpen_returnsResult0_schedulesProgressEvents_syncsState() throws Exception {
         DeviceState state = new DeviceState();
         state.setPutterExpanded(false);
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
-        RemoteDebugSimulator simulator = createSimulator(DeviceType.DOCK1, state, mqtt);
+        RemoteDebugSimulator simulator = createSimulator(DockModel.DOCK1, state, mqtt);
 
         Map<String, Object> result = simulator.handle("putter_open", null, "bid-putter-open");
 
@@ -119,12 +122,13 @@ class RemoteDebugSimulatorTest {
     /**
      * TC-RD-007：Dock1 putter_close → services_reply result=0 + 进度事件 + putterExpanded=false
      */
+    @DisplayName("TC-RD-007：putter_open / putter_close 状态同步（仅 Dock1）")
     @Test
     void dock1_putterClose_returnsResult0_schedulesProgressEvents_syncsState() throws Exception {
         DeviceState state = new DeviceState();
         state.setPutterExpanded(true);
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
-        RemoteDebugSimulator simulator = createSimulator(DeviceType.DOCK1, state, mqtt);
+        RemoteDebugSimulator simulator = createSimulator(DockModel.DOCK1, state, mqtt);
 
         Map<String, Object> result = simulator.handle("putter_close", null, "bid-putter-close");
 
@@ -144,11 +148,12 @@ class RemoteDebugSimulatorTest {
     /**
      * TC-RD-008/012：Dock3 rtk_calibration → services_reply result=0 + 进度事件，无状态变更
      */
+    @DisplayName("TC-RD-012：Dock3 才支持 rtk_calibration")
     @Test
     void dock3_rtkCalibration_returnsResult0_schedulesProgressEvents_noStateChange() throws Exception {
         DeviceState state = new DeviceState();
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
-        RemoteDebugSimulator simulator = createSimulator(DeviceType.DOCK3, state, mqtt);
+        RemoteDebugSimulator simulator = createSimulator(DockModel.DOCK3, state, mqtt);
 
         Map<String, Object> result = simulator.handle("rtk_calibration", null, "bid-rtk");
 
@@ -181,12 +186,13 @@ class RemoteDebugSimulatorTest {
     /**
      * TC-RD-010：Dock2 收到 putter_open → 占位 result=0，无进度事件，无状态变更
      */
+    @DisplayName("TC-RD-010：Dock1 才支持 putter_open / putter_close")
     @Test
     void dock2_putterOpen_unsupported_returnsPlaceholder_noEvents_noStateChange() {
         DeviceState state = new DeviceState();
         state.setPutterExpanded(false);
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
-        RemoteDebugSimulator simulator = createSimulator(DeviceType.DOCK2, state, mqtt);
+        RemoteDebugSimulator simulator = createSimulator(DockModel.DOCK2, state, mqtt);
 
         Map<String, Object> result = simulator.handle("putter_open", null, "bid-unsupported");
 
@@ -200,11 +206,12 @@ class RemoteDebugSimulatorTest {
     /**
      * TC-RD-012：Dock1 收到 rtk_calibration → 占位 result=0，无进度事件，无状态变更
      */
+    @DisplayName("TC-RD-012：Dock3 才支持 rtk_calibration")
     @Test
     void dock1_rtkCalibration_unsupported_returnsPlaceholder_noEvents_noStateChange() {
         DeviceState state = new DeviceState();
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
-        RemoteDebugSimulator simulator = createSimulator(DeviceType.DOCK1, state, mqtt);
+        RemoteDebugSimulator simulator = createSimulator(DockModel.DOCK1, state, mqtt);
 
         Map<String, Object> result = simulator.handle("rtk_calibration", null, "bid-unsupported");
 
@@ -217,6 +224,7 @@ class RemoteDebugSimulatorTest {
     /**
      * TC-RD-001/009：isRemoteDebugMethod 正确识别远程调试指令
      */
+    @DisplayName("补充测试：isRemoteDebugMethod 指令识别")
     @Test
     void isRemoteDebugMethod_recognizesRemoteDebugCommands() {
         // Job 指令

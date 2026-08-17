@@ -17,6 +17,9 @@ package ltd.cdmi.hivemind.simulator.handler;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import ltd.cdmi.dji.cloudapi.sdk.codec.MessageCodec;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.envelope.EventEnvelope;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.EventMethod;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticCode;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticLogRecorder;
@@ -126,20 +129,17 @@ public class FlightAreaSimulator {
                 .map(this::buildDroneLocationItem)
                 .toList();
 
-        Map<String, Object> data = new LinkedHashMap<>();
+        Map<String, Object> data = new java.util.LinkedHashMap<>();
         data.put("drone_locations", droneLocations);
 
-        Map<String, Object> envelope = new LinkedHashMap<>();
-        envelope.put("bid", UUID.randomUUID().toString());
-        envelope.put("tid", UUID.randomUUID().toString());
-        envelope.put("timestamp", System.currentTimeMillis());
-        envelope.put("need_reply", 0);  // 单向通知，不需平台回复
-        envelope.put("gateway", runtimeConfig.getDockSn());
-        envelope.put("method", "flight_areas_drone_location");
-        envelope.put("data", data);
+        EventEnvelope envelope = EventEnvelope.of(
+                UUID.randomUUID().toString(),
+                UUID.randomUUID().toString(),
+                System.currentTimeMillis(),
+                EventMethod.FLIGHT_AREAS_DRONE_LOCATION, data, runtimeConfig.getDockSn());
 
         String topic = dockTopicSchema.topic(dockTopicSchema.events(), runtimeConfig.getDockSn());
-        mqtt.publishJson(topic, envelope);
+        mqtt.publish(topic, MessageCodec.toJson(envelope));
     }
 
     /**
@@ -184,27 +184,24 @@ public class FlightAreaSimulator {
      * <p>data 含 status（enum_string）、reason（int）、file（struct: name/checksum）。</p>
      */
     private void publishSyncProgressEvent(SyncStatus status, int reason, FlightAreaFile file) {
-        Map<String, Object> data = new LinkedHashMap<>();
+        Map<String, Object> data = new java.util.LinkedHashMap<>();
         data.put("status", status.code());
         data.put("reason", reason);
         if (file != null) {
-            Map<String, Object> fileMap = new LinkedHashMap<>();
+            Map<String, Object> fileMap = new java.util.LinkedHashMap<>();
             fileMap.put("name", file.name());
             fileMap.put("checksum", file.checksum());
             data.put("file", fileMap);
         }
 
-        Map<String, Object> envelope = new LinkedHashMap<>();
-        envelope.put("bid", UUID.randomUUID().toString());
-        envelope.put("tid", UUID.randomUUID().toString());
-        envelope.put("timestamp", System.currentTimeMillis());
-        envelope.put("need_reply", 1);  // 需平台回复
-        envelope.put("gateway", runtimeConfig.getDockSn());
-        envelope.put("method", "flight_areas_sync_progress");
-        envelope.put("data", data);
+        EventEnvelope envelope = EventEnvelope.of(
+                UUID.randomUUID().toString(),
+                UUID.randomUUID().toString(),
+                System.currentTimeMillis(),
+                EventMethod.FLIGHT_AREAS_SYNC_PROGRESS, data, runtimeConfig.getDockSn());
 
         String topic = dockTopicSchema.topic(dockTopicSchema.events(), runtimeConfig.getDockSn());
-        mqtt.publishJson(topic, envelope);
+        mqtt.publish(topic, MessageCodec.toJson(envelope));
     }
 
     // ==================== 3. flight_areas_get（Requests） ====================
@@ -271,7 +268,7 @@ public class FlightAreaSimulator {
         if (!updateGetInferenceLogged) {
             updateGetInferenceLogged = true;
             diagnosticRecorder.record(DiagnosticCode.MONITOR_SIMULATOR_INFERENCE,
-                    "flight_areas_update",
+                    "flight_areas_update", // SDK ServiceMethod 中未定义，保留字符串字面量
                     "update→get 自动联动为推断行为（DJI 文档未明确），待真机验证");
         }
 

@@ -20,11 +20,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.device.DockOnlineService;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticLogRecorder;
-import ltd.cdmi.hivemind.simulator.handler.MediaUploader;
+import ltd.cdmi.hivemind.simulator.media.MediaUploader;
 import ltd.cdmi.hivemind.simulator.handler.PsdkSimulator;
 import ltd.cdmi.hivemind.simulator.handler.PsdkSimulator.TriggerResult;
 import ltd.cdmi.hivemind.simulator.mqtt.DockTopicSchema;
 import ltd.cdmi.hivemind.simulator.mqtt.MqttClientManager;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
@@ -58,17 +59,16 @@ class PsdkSimulatorTest {
         return objectMapper.readTree(json);
     }
 
-    /** 捕获 publishJson 发布的事件信封 */
-    @SuppressWarnings("unchecked")
+    /** 捕获 publish 发布的事件信封（EventEnvelope 序列化字符串） */
     private JsonNode captureEnvelope(MqttClientManager mqtt) throws Exception {
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        return objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
+        return objectMapper.readTree(captor.getValue());
     }
 
     // ==================== TC-PSDK-001：speaker_play_volume_set 服务应答 ====================
 
+    @DisplayName("TC-PSDK-001：speaker_play_volume_set 服务应答")
     @Test
     void speakerPlayVolumeSetReply() throws Exception {
         PsdkSimulator simulator = new PsdkSimulator(
@@ -84,6 +84,7 @@ class PsdkSimulatorTest {
 
     // ==================== TC-PSDK-002：speaker_play_mode_set 服务应答 ====================
 
+    @DisplayName("TC-PSDK-002：speaker_play_mode_set 服务应答")
     @Test
     void speakerPlayModeSetReply() throws Exception {
         PsdkSimulator simulator = new PsdkSimulator(
@@ -99,6 +100,7 @@ class PsdkSimulatorTest {
 
     // ==================== TC-PSDK-003：speaker_play_stop 服务应答 ====================
 
+    @DisplayName("TC-PSDK-003：speaker_play_stop 服务应答")
     @Test
     void speakerPlayStopReply() throws Exception {
         PsdkSimulator simulator = new PsdkSimulator(
@@ -114,6 +116,7 @@ class PsdkSimulatorTest {
 
     // ==================== TC-PSDK-004：isPsdkServiceMethod 指令识别 ====================
 
+    @DisplayName("TC-PSDK-004：isPsdkServiceMethod 指令识别")
     @Test
     void isPsdkServiceMethodRecognition() {
         assertTrue(PsdkSimulator.isPsdkServiceMethod("speaker_play_volume_set"));
@@ -125,6 +128,7 @@ class PsdkSimulatorTest {
 
     // ==================== TC-PSDK-005：speaker_tts_play_start_progress 事件结构 ====================
 
+    @DisplayName("TC-PSDK-005：speaker_tts_play_start_progress 事件结构")
     @Test
     void ttsPlayProgressEventStructure() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -138,7 +142,7 @@ class PsdkSimulatorTest {
         JsonNode node = captureEnvelope(mqtt);
 
         assertEquals("speaker_tts_play_start_progress", node.path("method").asText());
-        assertEquals(0, node.path("need_reply").asInt());
+        assertEquals(1, node.path("need_reply").asInt());
         assertEquals(0, node.path("data").path("result").asInt());
 
         JsonNode output = node.path("data").path("output");
@@ -156,6 +160,7 @@ class PsdkSimulatorTest {
 
     // ==================== TC-PSDK-006：speaker_tts_play_start_progress status 枚举值 ====================
 
+    @DisplayName("TC-PSDK-006：speaker_tts_play_start_progress status 枚举值")
     @Test
     void ttsPlayProgressStatusEnum() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -177,6 +182,7 @@ class PsdkSimulatorTest {
 
     // ==================== TC-PSDK-007：speaker_audio_play_start_progress 事件结构 ====================
 
+    @DisplayName("TC-PSDK-007：speaker_audio_play_start_progress 事件结构")
     @Test
     void audioPlayProgressEventStructure() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -190,7 +196,7 @@ class PsdkSimulatorTest {
         JsonNode node = captureEnvelope(mqtt);
 
         assertEquals("speaker_audio_play_start_progress", node.path("method").asText());
-        assertEquals(0, node.path("need_reply").asInt());
+        assertEquals(1, node.path("need_reply").asInt());
 
         JsonNode output = node.path("data").path("output");
         assertEquals(2, output.path("psdk_index").asInt());
@@ -206,6 +212,7 @@ class PsdkSimulatorTest {
 
     // ==================== TC-PSDK-008：psdk_floating_window_text 事件结构 ====================
 
+    @DisplayName("TC-PSDK-008：psdk_floating_window_text 事件结构")
     @Test
     void floatingWindowTextEventStructure() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -229,6 +236,7 @@ class PsdkSimulatorTest {
 
     // ==================== TC-PSDK-009：psdk_ui_resource_upload_result 事件结构 ====================
 
+    @DisplayName("TC-PSDK-009：psdk_ui_resource_upload_result 事件结构")
     @Test
     void uiResourceUploadResultEventStructure() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -255,6 +263,7 @@ class PsdkSimulatorTest {
 
     // ==================== TC-PSDK-010：MQTT 未连接拒绝 ====================
 
+    @DisplayName("TC-PSDK-010：MQTT 未连接拒绝")
     @Test
     void rejectWhenMqttNotConnected() {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -278,11 +287,12 @@ class PsdkSimulatorTest {
         assertFalse(r4.success());
         assertEquals("MQTT_NOT_CONNECTED", r4.code());
 
-        Mockito.verify(mqtt, Mockito.never()).publishJson(Mockito.anyString(), Mockito.any());
+        Mockito.verify(mqtt, Mockito.never()).publish(Mockito.anyString(), Mockito.any());
     }
 
     // ==================== TC-PSDK-011：md5 字段可由 REST API 覆盖 ====================
 
+    @DisplayName("TC-PSDK-011：md5 字段可由 REST API 覆盖")
     @Test
     void md5OverrideByApi() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -299,6 +309,7 @@ class PsdkSimulatorTest {
 
     // ==================== 辅助：构造函数记录 M-2 诊断日志 ====================
 
+    @DisplayName("补充测试：构造函数记录 M-2 诊断日志")
     @Test
     void constructorRecordsM2Diagnostic() {
         DiagnosticLogRecorder recorder = diagnosticRecorder();
@@ -314,6 +325,7 @@ class PsdkSimulatorTest {
 
     // ==================== TC-PSDK-013：speaker_replay 服务应答 ====================
 
+    @DisplayName("TC-PSDK-013：speaker_replay 服务应答")
     @Test
     void speakerReplayReply() throws Exception {
         PsdkSimulator simulator = new PsdkSimulator(
@@ -329,6 +341,7 @@ class PsdkSimulatorTest {
 
     // ==================== TC-PSDK-014：speaker_tts_play_start 服务应答 ====================
 
+    @DisplayName("TC-PSDK-014：speaker_tts_play_start 服务应答")
     @Test
     void speakerTtsPlayStartReply() throws Exception {
         PsdkSimulator simulator = new PsdkSimulator(
@@ -351,6 +364,7 @@ class PsdkSimulatorTest {
 
     // ==================== TC-PSDK-015：speaker_audio_play_start 服务应答 ====================
 
+    @DisplayName("TC-PSDK-015：speaker_audio_play_start 服务应答")
     @Test
     void speakerAudioPlayStartReply() throws Exception {
         PsdkSimulator simulator = new PsdkSimulator(
@@ -374,6 +388,7 @@ class PsdkSimulatorTest {
 
     // ==================== TC-PSDK-016：psdk_input_box_text_set 服务应答与浮窗事件联动 ====================
 
+    @DisplayName("TC-PSDK-016：psdk_input_box_text_set 服务应答与浮窗事件联动")
     @Test
     void inputBoxTextSetReplyAndFloatingWindowEvent() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -397,6 +412,7 @@ class PsdkSimulatorTest {
 
     // ==================== TC-PSDK-017：isPsdkServiceMethod 识别第 2/3 部分新指令 ====================
 
+    @DisplayName("TC-PSDK-017：isPsdkServiceMethod 识别第 2/3 部分新指令")
     @Test
     void isPsdkServiceMethodRecognitionPart2() {
         assertTrue(PsdkSimulator.isPsdkServiceMethod("speaker_replay"));
@@ -407,6 +423,7 @@ class PsdkSimulatorTest {
 
     // ==================== TC-PSDK-018：psdk_widget_value_set 服务应答 ====================
 
+    @DisplayName("TC-PSDK-018：psdk_widget_value_set 服务应答")
     @Test
     void widgetValueSetReply() throws Exception {
         PsdkSimulator simulator = new PsdkSimulator(
@@ -423,6 +440,7 @@ class PsdkSimulatorTest {
 
     // ==================== TC-PSDK-019：isPsdkServiceMethod 识别 psdk_widget_value_set ====================
 
+    @DisplayName("TC-PSDK-019：isPsdkServiceMethod 识别 psdk_widget_value_set")
     @Test
     void isPsdkServiceMethodRecognitionWidgetValueSet() {
         assertTrue(PsdkSimulator.isPsdkServiceMethod("psdk_widget_value_set"));
@@ -430,6 +448,7 @@ class PsdkSimulatorTest {
 
     // ==================== TC-PSDK-020+021：PSDK UI 资源完整上传流程 ====================
 
+    @DisplayName("TC-PSDK-021：PSDK UI 资源完整上传流程")
     @Test
     void uploadUiResourceFullFlow() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -466,6 +485,7 @@ class PsdkSimulatorTest {
         assertTrue(envelope.path("data").path("size").asInt() > 0, "size 应为内置资源字节数");
     }
 
+    @DisplayName("补充测试：uploadUiResource MQTT 未连接拒绝")
     @Test
     void uploadUiResourceMqttNotConnected() {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -482,6 +502,7 @@ class PsdkSimulatorTest {
 
     // ==================== TC-PSDK-022：custom_data_transmission_to_psdk 服务应答 ====================
 
+    @DisplayName("TC-PSDK-022：custom_data_transmission_to_psdk 服务应答")
     @Test
     void customDataToPsdkReply() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -498,6 +519,7 @@ class PsdkSimulatorTest {
 
     // ==================== TC-PSDK-023：custom_data_transmission_from_psdk 事件上报 ====================
 
+    @DisplayName("TC-PSDK-023：custom_data_transmission_from_psdk 事件上报")
     @Test
     void customDataFromPsdkEvent() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -517,6 +539,7 @@ class PsdkSimulatorTest {
 
     // ==================== TC-PSDK-024：isPsdkServiceMethod 识别 custom_data_transmission_to_psdk ====================
 
+    @DisplayName("TC-PSDK-024：isPsdkServiceMethod 识别 custom_data_transmission_to_psdk")
     @Test
     void isPsdkServiceMethodRecognitionCustomData() {
         assertTrue(PsdkSimulator.isPsdkServiceMethod("custom_data_transmission_to_psdk"));

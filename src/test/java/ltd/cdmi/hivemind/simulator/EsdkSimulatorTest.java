@@ -23,6 +23,7 @@ import ltd.cdmi.hivemind.simulator.handler.EsdkSimulator;
 import ltd.cdmi.hivemind.simulator.handler.EsdkSimulator.TriggerResult;
 import ltd.cdmi.hivemind.simulator.mqtt.DockTopicSchema;
 import ltd.cdmi.hivemind.simulator.mqtt.MqttClientManager;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
@@ -55,17 +56,16 @@ class EsdkSimulatorTest {
         return objectMapper.readTree(json);
     }
 
-    /** 捕获 publishJson 发布的事件信封 */
-    @SuppressWarnings("unchecked")
+    /** 捕获 publish 发布的事件信封（EventEnvelope 序列化字符串） */
     private JsonNode captureEnvelope(MqttClientManager mqtt) throws Exception {
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        return objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
+        return objectMapper.readTree(captor.getValue());
     }
 
     // ==================== TC-ESDK-001：custom_data_transmission_to_esdk 服务应答 ====================
 
+    @DisplayName("TC-ESDK-001：custom_data_transmission_to_esdk 服务应答")
     @Test
     void customDataToEsdkReply() throws Exception {
         EsdkSimulator simulator = new EsdkSimulator(
@@ -81,6 +81,7 @@ class EsdkSimulatorTest {
 
     // ==================== TC-ESDK-002：custom_data_transmission_from_esdk 事件上报 ====================
 
+    @DisplayName("TC-ESDK-002：custom_data_transmission_from_esdk 事件上报")
     @Test
     void customDataFromEsdkEvent() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -99,6 +100,7 @@ class EsdkSimulatorTest {
 
     // ==================== TC-ESDK-003：isEsdkServiceMethod 识别 custom_data_transmission_to_esdk ====================
 
+    @DisplayName("TC-ESDK-003：isEsdkServiceMethod 识别 custom_data_transmission_to_esdk")
     @Test
     void isEsdkServiceMethodRecognition() {
         assertTrue(EsdkSimulator.isEsdkServiceMethod("custom_data_transmission_to_esdk"));

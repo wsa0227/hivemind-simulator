@@ -23,6 +23,7 @@ import ltd.cdmi.hivemind.simulator.handler.RemoteLogSimulator;
 import ltd.cdmi.hivemind.simulator.handler.RemoteLogSimulator.TriggerResult;
 import ltd.cdmi.hivemind.simulator.mqtt.DockTopicSchema;
 import ltd.cdmi.hivemind.simulator.mqtt.MqttClientManager;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
@@ -57,16 +58,15 @@ class RemoteLogSimulatorTest {
         return objectMapper.readTree(json);
     }
 
-    @SuppressWarnings("unchecked")
     private JsonNode captureEnvelope(MqttClientManager mqtt) throws Exception {
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt, Mockito.atLeastOnce()).publishJson(Mockito.anyString(), captor.capture());
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        return objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt, Mockito.atLeastOnce()).publish(Mockito.anyString(), captor.capture());
+        return objectMapper.readTree(captor.getValue());
     }
 
     // ==================== TC-RLOG-001：fileupload_start 服务应答 ====================
 
+    @DisplayName("TC-RLOG-001：fileupload_start 服务应答")
     @Test
     void fileUploadStartReply() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -82,6 +82,7 @@ class RemoteLogSimulatorTest {
 
     // ==================== TC-RLOG-002：fileupload_start 自动模拟上传进度 ====================
 
+    @DisplayName("TC-RLOG-002：fileupload_start 自动模拟上传进度")
     @Test
     void fileUploadStartAutoProgress() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -95,15 +96,16 @@ class RemoteLogSimulatorTest {
         Thread.sleep(5000);
 
         // 验证至少上报了 2 次 fileupload_progress
-        Mockito.verify(mqtt, Mockito.atLeast(2)).publishJson(Mockito.anyString(), Mockito.any());
+        Mockito.verify(mqtt, Mockito.atLeast(2)).publish(Mockito.anyString(), Mockito.any());
 
         JsonNode envelope = captureEnvelope(mqtt);
         assertEquals("fileupload_progress", envelope.path("method").asText());
-        assertEquals(0, envelope.path("need_reply").asInt());
+        assertEquals(0, envelope.path("need_reply").asInt(), "fileupload_progress need_reply=0（DJI 文档 Dock2 log.html Example 明确）");
     }
 
     // ==================== TC-RLOG-003：fileupload_update 取消上传 ====================
 
+    @DisplayName("TC-RLOG-003：fileupload_update 取消上传")
     @Test
     void fileUploadUpdateCancel() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -122,6 +124,7 @@ class RemoteLogSimulatorTest {
 
     // ==================== TC-RLOG-004：fileupload_progress 事件结构 ====================
 
+    @DisplayName("TC-RLOG-004：fileupload_progress 事件结构（module=3 dock）")
     @Test
     void fileUploadProgressEventStructure() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -141,7 +144,7 @@ class RemoteLogSimulatorTest {
 
         JsonNode envelope = captureEnvelope(mqtt);
         assertEquals("fileupload_progress", envelope.path("method").asText());
-        assertEquals(0, envelope.path("need_reply").asInt());
+        assertEquals(0, envelope.path("need_reply").asInt(), "fileupload_progress need_reply=0（DJI 文档 Dock2 log.html Example 明确）");
         assertEquals(0, envelope.path("data").path("result").asInt());
         assertEquals("ok", envelope.path("data").path("output").path("status").asText());
 
@@ -172,6 +175,7 @@ class RemoteLogSimulatorTest {
 
     // ==================== TC-RLOG-004b：module=0 飞行器不含 total_step ====================
 
+    @DisplayName("TC-RLOG-004b：fileupload_progress 飞行器模块不含 total_step")
     @Test
     void fileUploadProgressDroneModuleNoTotalStep() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -197,6 +201,7 @@ class RemoteLogSimulatorTest {
 
     // ==================== TC-RLOG-005：isRemoteLogServiceMethod 识别远程日志指令 ====================
 
+    @DisplayName("TC-RLOG-005：isRemoteLogServiceMethod 识别远程日志指令")
     @Test
     void isRemoteLogServiceMethodRecognition() {
         assertTrue(RemoteLogSimulator.isRemoteLogServiceMethod("fileupload_start"));
@@ -207,6 +212,7 @@ class RemoteLogSimulatorTest {
 
     // ==================== TC-RLOG-006：fileupload_list 服务应答 ====================
 
+    @DisplayName("TC-RLOG-006：fileupload_list 服务应答")
     @Test
     void fileUploadListReply() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -250,6 +256,7 @@ class RemoteLogSimulatorTest {
 
     // ==================== TC-RLOG-006b：fileupload_list 模块过滤 ====================
 
+    @DisplayName("TC-RLOG-006b：fileupload_list 模块过滤")
     @Test
     void fileUploadListModuleFilter() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);

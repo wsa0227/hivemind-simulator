@@ -17,6 +17,7 @@ package ltd.cdmi.hivemind.simulator.http;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import ltd.cdmi.dji.cloudapi.sdk.http.HttpResponseEnvelope;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -109,12 +110,12 @@ public class HivemindHttpClient {
             log.debug("hivemind HTTP 请求: {} {}", method, fullUrl);
 
             String responseBody = restTemplate.exchange(fullUrl, method, entity, String.class).getBody();
-            JsonNode json = objectMapper.readTree(responseBody);
-            int code = json.path("code").asInt(-1);
-            String message = json.path("message").asText("");
-            JsonNode data = json.path("data");
-            log.info("hivemind HTTP 响应: {} {} code={} message={}", method, url, code, message);
-            return new HivemindResponse(true, code, message, data);
+            HttpResponseEnvelope<JsonNode> envelope = HttpResponseEnvelope.parse(responseBody, JsonNode.class);
+            log.info("hivemind HTTP 响应: {} {} code={} message={}", method, url, envelope.code(), envelope.message());
+            // SDK HttpResponseEnvelope.parse 返回 null data 当 data 字段缺失；保持与原 json.path("data") 一致的 MissingNode 行为
+            JsonNode data = envelope.data() != null ? envelope.data() : objectMapper.getNodeFactory().missingNode();
+            String message = envelope.message() != null ? envelope.message() : "";
+            return new HivemindResponse(true, envelope.code(), message, data);
         } catch (Exception e) {
             log.error("hivemind HTTP 请求失败: {} {} - {}", method, url, e.getMessage());
             return new HivemindResponse(false, -1, e.getMessage(), null);

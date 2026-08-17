@@ -15,6 +15,7 @@
 
 package ltd.cdmi.hivemind.simulator.http.api;
 
+import ltd.cdmi.dji.cloudapi.sdk.http.HttpApiPath;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.http.HivemindHttpClient;
 import org.slf4j.Logger;
@@ -43,8 +44,8 @@ public class MediaApi {
 
     private static final Logger log = LoggerFactory.getLogger(MediaApi.class);
 
-    /** 媒体管理 API 路径前缀 */
-    private static final String BASE_PATH = "/media/api/v1/workspaces";
+    /** 媒体管理 API 路径前缀（委托 SDK {@link HttpApiPath#MEDIA_BASE_PATH}） */
+    private static final String BASE_PATH = HttpApiPath.MEDIA_BASE_PATH;
 
     private final HivemindHttpClient httpClient;
     private final RuntimeConfig runtimeConfig;

@@ -21,6 +21,7 @@ import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
 import ltd.cdmi.hivemind.simulator.http.HivemindHttpClient;
 import ltd.cdmi.hivemind.simulator.http.api.DeviceTopoApi;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -45,13 +46,14 @@ class SituationAwarenessWsHandlerTest {
     @BeforeEach
     void setUp() {
         deviceTopoApi = mock(DeviceTopoApi.class);
-        props = new SimulatorProperties(null, new SimulatorProperties.Log(2000), null, null, null, null, null);
+        props = new SimulatorProperties(null, new SimulatorProperties.Log(2000), null, null, null, null, null, null);
         objectMapper = new ObjectMapper();
         handler = new SituationAwarenessWsHandler(deviceTopoApi, props, objectMapper);
     }
 
     // ==================== TC-TSA-001：device_osd 仅记录事件日志，不触发 HTTP ====================
 
+    @DisplayName("TC-TSA-001：device_osd 仅记录事件日志，不触发 HTTP")
     @Test
     void deviceOsdDoesNotTriggerHttpButRecordsEvent() throws Exception {
         String msg = "{\"biz_code\":\"device_osd\",\"version\":\"1.0\",\"timestamp\":146052438362,"
@@ -81,6 +83,7 @@ class SituationAwarenessWsHandlerTest {
 
     // ==================== TC-TSA-002：device_online 触发获取设备拓扑列表 ====================
 
+    @DisplayName("TC-TSA-002：device_online 触发获取设备拓扑列表")
     @Test
     void deviceOnlineTriggersDeviceTopoFetch() throws Exception {
         when(deviceTopoApi.getDeviceTopo()).thenReturn(
@@ -97,6 +100,7 @@ class SituationAwarenessWsHandlerTest {
 
     // ==================== TC-TSA-003：device_offline 触发获取设备拓扑列表 ====================
 
+    @DisplayName("TC-TSA-003：device_offline 触发获取设备拓扑列表")
     @Test
     void deviceOfflineTriggersDeviceTopoFetch() throws Exception {
         when(deviceTopoApi.getDeviceTopo()).thenReturn(
@@ -113,6 +117,7 @@ class SituationAwarenessWsHandlerTest {
 
     // ==================== TC-TSA-004：device_update_topo 触发获取设备拓扑列表 ====================
 
+    @DisplayName("TC-TSA-004：device_update_topo 触发获取设备拓扑列表")
     @Test
     void deviceUpdateTopoTriggersDeviceTopoFetch() throws Exception {
         when(deviceTopoApi.getDeviceTopo()).thenReturn(
@@ -129,10 +134,11 @@ class SituationAwarenessWsHandlerTest {
 
     // ==================== TC-TSA-006：事件日志容量上限（FIFO） ====================
 
+    @DisplayName("TC-TSA-006：态势感知事件日志容量上限")
     @Test
     void eventLogRespectsMaxSize() throws Exception {
         // 使用小容量上限便于测试
-        props = new SimulatorProperties(null, new SimulatorProperties.Log(3), null, null, null, null, null);
+        props = new SimulatorProperties(null, new SimulatorProperties.Log(3), null, null, null, null, null, null);
         handler = new SituationAwarenessWsHandler(deviceTopoApi, props, objectMapper);
         when(deviceTopoApi.getDeviceTopo()).thenReturn(
                 new HivemindHttpClient.HivemindResponse(true, 0, "success", null));
@@ -150,6 +156,7 @@ class SituationAwarenessWsHandlerTest {
 
     // ==================== supportedBizCodes 覆盖 4 种 ====================
 
+    @DisplayName("补充测试：supportedBizCodes 覆盖 4 种 biz_code")
     @Test
     void supportedBizCodesCoversAllFour() {
         Set<String> codes = handler.supportedBizCodes();
@@ -162,6 +169,7 @@ class SituationAwarenessWsHandlerTest {
 
     // ==================== 清空事件日志 ====================
 
+    @DisplayName("补充测试：清空事件日志")
     @Test
     void clearEventsEmptiesLog() throws Exception {
         when(deviceTopoApi.getDeviceTopo()).thenReturn(

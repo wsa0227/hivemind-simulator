@@ -31,6 +31,7 @@ function registerDockPanel(app) {
             ];
             const hmsSelected = ref([]);
             const hmsReporting = ref(false);
+            const activeTab = ref('status');
 
             // 自定义飞行区模拟（Dock3）
             const faLocation = reactive({ area_id: '', area_distance: 100.0, is_in_area: true });
@@ -513,6 +514,7 @@ function registerDockPanel(app) {
             return {
                 ...ctx,
                 // Dock 专属状态
+                activeTab,
                 hmsOptions, hmsSelected, hmsReporting,
                 faLocation, faReporting, faSync, faSyncReporting, faGetting, faSyncStatusOptions,
                 psdk, esdk, remoteLog, ota,
@@ -527,6 +529,8 @@ function registerDockPanel(app) {
             };
         },
         template: `
+            <el-tabs v-model="activeTab" class="dock-tabs">
+            <el-tab-pane label="设备状态" name="status">
             <!-- 状态模拟（Dock 版：电量/温度/湿度/风速/舱盖/飞行器/静音模式） -->
             <el-card class="right-card" header="状态模拟">
                 <el-form label-width="72px" size="small">
@@ -576,38 +580,159 @@ function registerDockPanel(app) {
                 </div>
             </el-card>
 
-            <!-- 自定义飞行区模拟（Dock3） -->
+            </el-tab-pane>
+            <el-tab-pane label="飞行任务" name="task">
+
+            <!-- 任务模拟（Dock 版：航线任务+媒体文件） -->
             <el-card class="right-card">
-                <template #header><span>自定义飞行区</span></template>
-                <!-- 位置告警 -->
-                <div style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px dashed #e4e7ed;">
-                    <div style="font-size: 13px; font-weight: 500; margin-bottom: 8px;">位置告警推送</div>
-                    <el-input v-model="faLocation.area_id" size="small" placeholder="飞行区 ID" style="margin-bottom: 6px;"></el-input>
-                    <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 6px;">
-                        <el-input-number v-model="faLocation.area_distance" size="small" :controls="false" style="flex: 1;"></el-input-number>
-                        <el-checkbox v-model="faLocation.is_in_area">在区内</el-checkbox>
+                <template #header>任务模拟</template>
+                <el-descriptions :column="1" border size="small">
+                    <el-descriptions-item label="任务状态">
+                        <el-tag :type="task.active ? 'warning' : 'info'" size="small">
+                            {{ task.active ? (task.paused ? '暂停' : '执行中') : '空闲' }}
+                        </el-tag>
+                    </el-descriptions-item>
+                    <el-descriptions-item label="Flight ID">{{ task.flight_id || '-' }}</el-descriptions-item>
+                    <el-descriptions-item label="进度">{{ task.percent || 0 }}%</el-descriptions-item>
+                    <el-descriptions-item label="步骤">{{ task.current_step || '-' }} / 35</el-descriptions-item>
+                </el-descriptions>
+                <el-progress :percentage="task.percent || 0" :status="task.active ? undefined : 'success'" style="margin-top: 8px;"></el-progress>
+                <div style="margin-top: 8px;">
+                    <div style="font-size: 12px; color: #909399; margin-bottom: 4px;">媒体文件 ({{ media.length }})</div>
+                    <div v-for="f in media.slice(-5)" :key="f.name" style="font-size: 12px; color: #606266;">
+                        {{ f.name }} - {{ f.upload_time }}
                     </div>
-                    <el-button type="primary" size="small" :disabled="!mqttConnected" :loading="faReporting" @click="triggerFaLocation">推送位置告警</el-button>
-                </div>
-                <!-- 同步进度 -->
-                <div style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px dashed #e4e7ed;">
-                    <div style="font-size: 13px; font-weight: 500; margin-bottom: 8px;">同步进度上报</div>
-                    <el-select v-model="faSync.status" size="small" style="width: 100%; margin-bottom: 6px;">
-                        <el-option v-for="opt in faSyncStatusOptions" :key="opt.value" :label="opt.label" :value="opt.value"></el-option>
-                    </el-select>
-                    <div style="display: flex; gap: 8px; margin-bottom: 6px;">
-                        <el-input-number v-model="faSync.reason" size="small" :controls="false" placeholder="reason" style="flex: 1;"></el-input-number>
-                        <el-input v-model="faSync.file_name" size="small" placeholder="文件名" style="flex: 1;"></el-input>
-                    </div>
-                    <el-input v-model="faSync.file_checksum" size="small" placeholder="checksum（SHA256）" style="margin-bottom: 6px;"></el-input>
-                    <el-button type="primary" size="small" :disabled="!mqttConnected" :loading="faSyncReporting" @click="triggerFaSync">上报同步进度</el-button>
-                </div>
-                <!-- 获取文件 -->
-                <div>
-                    <div style="font-size: 13px; font-weight: 500; margin-bottom: 8px;">获取飞行区文件</div>
-                    <el-button type="primary" size="small" :disabled="!mqttConnected" :loading="faGetting" @click="triggerFaGet">发起获取请求</el-button>
                 </div>
             </el-card>
+
+            <!-- 直播模拟 -->
+            <el-card class="right-card">
+                <template #header>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>直播模拟</span>
+                        <el-button size="small" text @click="refreshLiveCapability">重新检测</el-button>
+                    </div>
+                </template>
+                <!-- 推流能力状态 -->
+                <div v-if="liveCapability" style="margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px dashed #e4e7ed;">
+                    <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
+                        <span style="font-size: 13px; color: #606266;">推流能力:</span>
+                        <el-tag v-if="liveCapability.whipSupported && liveCapability.rtmpSupported" type="success" size="small">完整 (RTMP+WHIP)</el-tag>
+                        <el-tag v-else-if="liveCapability.rtmpSupported" type="success" size="small">RTMP</el-tag>
+                        <el-tag v-else-if="liveCapability.whipSupported" type="success" size="small">WHIP</el-tag>
+                        <el-tag v-else type="warning" size="small">受限</el-tag>
+                        <span v-if="liveCapability.activePushCount > 0" style="font-size: 12px; color: #909399;">（{{ liveCapability.activePushCount }} 路推流中）</span>
+                        <el-button size="small" text type="primary" @click="openLiveConfigDialog" style="margin-left: auto;">配置</el-button>
+                    </div>
+                    <!-- 限制清单 -->
+                    <div v-if="liveCapability.limitations && liveCapability.limitations.length > 0">
+                        <div v-for="(lim, i) in liveCapability.limitations" :key="i" style="background: #fdf6ec; border: 1px solid #f5dab1; border-radius: 4px; padding: 8px; margin-bottom: 6px; font-size: 12px;">
+                            <div style="font-weight: bold; color: #e6a23c;">
+                                <span v-if="lim.code !== 'CONFIG'" style="margin-right: 4px;">[{{ lim.code }}]</span>{{ lim.title }}
+                            </div>
+                            <div style="color: #606266; margin-top: 4px;"><b>原因:</b> {{ lim.reason }}</div>
+                            <div style="color: #606266; margin-top: 2px;"><b>操作:</b> {{ lim.action }}</div>
+                            <div style="color: #67c23a; margin-top: 2px;"><b>突破后:</b> {{ lim.afterFix }}</div>
+                        </div>
+                    </div>
+                    <!-- 已有资源（完整时展示） -->
+                    <div v-else style="font-size: 12px; color: #67c23a;">
+                        ffmpeg: {{ liveCapability.ffmpegPath }} {{ liveCapability.whipSupported ? '(支持WHIP)' : '' }}<br>
+                        视频目录: {{ liveCapability.videoDir || '-' }}<br>
+                        <span v-if="liveCapability.videosFound && liveCapability.videosFound.length > 0">已有视频: {{ liveCapability.videosFound.join(', ') }}</span>
+                    </div>
+                </div>
+                <!-- 活跃推流列表 -->
+                <div v-if="streams.length === 0" style="color: #909399; font-size: 13px;">无活跃推流</div>
+                <div v-for="s in streams" :key="s.video_id" style="margin-bottom: 8px; font-size: 13px;">
+                    <el-tag type="success" size="small">推流中</el-tag>
+                    <div style="margin-top: 4px;">videoId: {{ s.video_id }}</div>
+                    <div>清晰度: {{ ['自适应','流畅','标清','高清','超清'][s.quality] }}</div>
+                </div>
+            </el-card>
+
+            <!-- 位置模拟（Dock 版：机场位置=起飞点=返航点） -->
+            <el-card class="right-card">
+                <template #header>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div style="display: flex; align-items: center; gap: 8px;">
+                            <span>位置模拟</span>
+                            <el-radio-group v-model="mapMode" size="small" @change="onMapModeChange">
+                                <el-radio-button value="map" :disabled="!amapKeyApplied">地图</el-radio-button>
+                                <el-radio-button value="manual">手动</el-radio-button>
+                            </el-radio-group>
+                            <el-button size="small" text @click="showAmapConfigDialog = true">配置</el-button>
+                        </div>
+                        <el-button v-if="mapMode === 'manual'" size="small" type="primary" @click="saveLocation">保存</el-button>
+                    </div>
+                </template>
+                <!-- 地图模式 -->
+                <div v-if="mapMode === 'map'">
+                    <!-- 地址搜索 + 选点按钮 -->
+                    <div style="display: flex; gap: 4px; margin-bottom: 4px;">
+                        <el-autocomplete
+                            v-model="addressSearch"
+                            :fetch-suggestions="fetchAddressSuggestions"
+                            placeholder="输入地址搜索"
+                            size="small"
+                            clearable
+                            value-key="value"
+                            style="flex: 1;"
+                            @select="onAddressSelect"
+                        ></el-autocomplete>
+                        <el-button size="small" :type="selectingAirport ? 'warning' : 'default'" @click="startSelectAirport">
+                            {{ selectingAirport ? '点击地图' : '选点' }}
+                        </el-button>
+                        <el-button v-if="selectingAirport" size="small" @click="cancelSelectAirport">取消</el-button>
+                    </div>
+                    <!-- 地图容器 -->
+                    <div id="mapContainer" style="width: 100%; height: 240px; border: 1px solid #e4e7ed; border-radius: 4px;"></div>
+                </div>
+                <!-- 手动模式 -->
+                <div v-if="mapMode === 'manual'">
+                    <!-- 未配置 Key 时提示 -->
+                    <div v-if="!amapKeyApplied" style="margin-bottom: 8px; padding: 8px; background: #f5f7fa; border-radius: 4px; font-size: 12px; color: #909399;">
+                        点击「配置」按钮申请并填写高德地图 Key，可切换到地图模式
+                    </div>
+                    <!-- 经纬度+高度输入 -->
+                    <el-form label-width="60px" size="small">
+                        <el-form-item label="纬度">
+                            <el-input-number v-model="locationEdit.latitude" :precision="6" :step="0.000001" :controls="false" style="width: 100%;"></el-input-number>
+                        </el-form-item>
+                        <el-form-item label="经度">
+                            <el-input-number v-model="locationEdit.longitude" :precision="6" :step="0.000001" :controls="false" style="width: 100%;"></el-input-number>
+                        </el-form-item>
+                        <el-form-item label="高度(m)">
+                            <el-input-number v-model="locationEdit.height" :precision="1" :step="0.1" :controls="false" style="width: 100%;"></el-input-number>
+                        </el-form-item>
+                    </el-form>
+                </div>
+                <div style="font-size: 12px; color: #909399; margin-top: 4px;">
+                    机场位置作为起飞点与返航点，保存后重启依然有效。
+                </div>
+
+                <!-- 无人机实时位置 -->
+                <div style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed #e4e7ed;">
+                    <div style="font-size: 13px; color: #303133; margin-bottom: 6px;">无人机位置</div>
+                    <el-descriptions :column="1" border size="small">
+                        <el-descriptions-item label="纬度">{{ dronePosition.activated ? dronePosition.latitude.toFixed(6) : '-' }}</el-descriptions-item>
+                        <el-descriptions-item label="经度">{{ dronePosition.activated ? dronePosition.longitude.toFixed(6) : '-' }}</el-descriptions-item>
+                        <el-descriptions-item label="高度(m)">{{ dronePosition.activated ? dronePosition.height.toFixed(1) : '-' }}</el-descriptions-item>
+                        <el-descriptions-item label="状态">{{ droneStatusLabel }}</el-descriptions-item>
+                    </el-descriptions>
+                    <div style="margin-top: 8px; display: flex; align-items: center; gap: 8px;">
+                        <el-button size="small" type="warning" :disabled="!canTriggerRcLost" @click="triggerRcLost">模拟失联</el-button>
+                        <el-select size="small" v-model="dronePosition.rc_lost_action" style="width: 110px;" @change="saveRcLostAction">
+                            <el-option label="悬停" :value="0"></el-option>
+                            <el-option label="降落" :value="1"></el-option>
+                            <el-option label="返航" :value="2"></el-option>
+                        </el-select>
+                    </div>
+                </div>
+            </el-card>
+
+            </el-tab-pane>
+            <el-tab-pane label="负载设备" name="payload">
 
             <!-- PSDK 喊话器与负载事件模拟（Dock3） -->
             <el-card class="right-card">
@@ -712,6 +837,9 @@ function registerDockPanel(app) {
                 </div>
             </el-card>
 
+            </el-tab-pane>
+            <el-tab-pane label="系统维护" name="system">
+
             <!-- 远程日志 -->
             <el-card class="right-card">
                 <template #header><span>远程日志</span></template>
@@ -766,153 +894,41 @@ function registerDockPanel(app) {
                 </div>
             </el-card>
 
-            <!-- 直播模拟 -->
+            <!-- 自定义飞行区模拟（Dock3） -->
             <el-card class="right-card">
-                <template #header>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span>直播模拟</span>
-                        <el-button size="small" text @click="refreshLiveCapability">重新检测</el-button>
+                <template #header><span>自定义飞行区</span></template>
+                <!-- 位置告警 -->
+                <div style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px dashed #e4e7ed;">
+                    <div style="font-size: 13px; font-weight: 500; margin-bottom: 8px;">位置告警推送</div>
+                    <el-input v-model="faLocation.area_id" size="small" placeholder="飞行区 ID" style="margin-bottom: 6px;"></el-input>
+                    <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 6px;">
+                        <el-input-number v-model="faLocation.area_distance" size="small" :controls="false" style="flex: 1;"></el-input-number>
+                        <el-checkbox v-model="faLocation.is_in_area">在区内</el-checkbox>
                     </div>
-                </template>
-                <!-- 推流能力状态 -->
-                <div v-if="liveCapability" style="margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px dashed #e4e7ed;">
-                    <div style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px;">
-                        <span style="font-size: 13px; color: #606266;">推流能力:</span>
-                        <el-tag v-if="liveCapability.whipSupported && liveCapability.rtmpSupported" type="success" size="small">完整 (RTMP+WHIP)</el-tag>
-                        <el-tag v-else-if="liveCapability.rtmpSupported" type="success" size="small">RTMP</el-tag>
-                        <el-tag v-else-if="liveCapability.whipSupported" type="success" size="small">WHIP</el-tag>
-                        <el-tag v-else type="warning" size="small">受限</el-tag>
-                        <span v-if="liveCapability.activePushCount > 0" style="font-size: 12px; color: #909399;">（{{ liveCapability.activePushCount }} 路推流中）</span>
-                        <el-button size="small" text type="primary" @click="openLiveConfigDialog" style="margin-left: auto;">配置</el-button>
-                    </div>
-                    <!-- 限制清单 -->
-                    <div v-if="liveCapability.limitations && liveCapability.limitations.length > 0">
-                        <div v-for="(lim, i) in liveCapability.limitations" :key="i" style="background: #fdf6ec; border: 1px solid #f5dab1; border-radius: 4px; padding: 8px; margin-bottom: 6px; font-size: 12px;">
-                            <div style="font-weight: bold; color: #e6a23c;">
-                                <span v-if="lim.code !== 'CONFIG'" style="margin-right: 4px;">[{{ lim.code }}]</span>{{ lim.title }}
-                            </div>
-                            <div style="color: #606266; margin-top: 4px;"><b>原因:</b> {{ lim.reason }}</div>
-                            <div style="color: #606266; margin-top: 2px;"><b>操作:</b> {{ lim.action }}</div>
-                            <div style="color: #67c23a; margin-top: 2px;"><b>突破后:</b> {{ lim.afterFix }}</div>
-                        </div>
-                    </div>
-                    <!-- 已有资源（完整时展示） -->
-                    <div v-else style="font-size: 12px; color: #67c23a;">
-                        ffmpeg: {{ liveCapability.ffmpegPath }} {{ liveCapability.whipSupported ? '(支持WHIP)' : '' }}<br>
-                        视频目录: {{ liveCapability.videoDir || '-' }}<br>
-                        <span v-if="liveCapability.videosFound && liveCapability.videosFound.length > 0">已有视频: {{ liveCapability.videosFound.join(', ') }}</span>
-                    </div>
+                    <el-button type="primary" size="small" :disabled="!mqttConnected" :loading="faReporting" @click="triggerFaLocation">推送位置告警</el-button>
                 </div>
-                <!-- 活跃推流列表 -->
-                <div v-if="streams.length === 0" style="color: #909399; font-size: 13px;">无活跃推流</div>
-                <div v-for="s in streams" :key="s.video_id" style="margin-bottom: 8px; font-size: 13px;">
-                    <el-tag type="success" size="small">推流中</el-tag>
-                    <div style="margin-top: 4px;">videoId: {{ s.video_id }}</div>
-                    <div>清晰度: {{ ['自适应','流畅','标清','高清','超清'][s.quality] }}</div>
+                <!-- 同步进度 -->
+                <div style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px dashed #e4e7ed;">
+                    <div style="font-size: 13px; font-weight: 500; margin-bottom: 8px;">同步进度上报</div>
+                    <el-select v-model="faSync.status" size="small" style="width: 100%; margin-bottom: 6px;">
+                        <el-option v-for="opt in faSyncStatusOptions" :key="opt.value" :label="opt.label" :value="opt.value"></el-option>
+                    </el-select>
+                    <div style="display: flex; gap: 8px; margin-bottom: 6px;">
+                        <el-input-number v-model="faSync.reason" size="small" :controls="false" placeholder="reason" style="flex: 1;"></el-input-number>
+                        <el-input v-model="faSync.file_name" size="small" placeholder="文件名" style="flex: 1;"></el-input>
+                    </div>
+                    <el-input v-model="faSync.file_checksum" size="small" placeholder="checksum（SHA256）" style="margin-bottom: 6px;"></el-input>
+                    <el-button type="primary" size="small" :disabled="!mqttConnected" :loading="faSyncReporting" @click="triggerFaSync">上报同步进度</el-button>
+                </div>
+                <!-- 获取文件 -->
+                <div>
+                    <div style="font-size: 13px; font-weight: 500; margin-bottom: 8px;">获取飞行区文件</div>
+                    <el-button type="primary" size="small" :disabled="!mqttConnected" :loading="faGetting" @click="triggerFaGet">发起获取请求</el-button>
                 </div>
             </el-card>
 
-            <!-- 任务模拟（Dock 版：航线任务+媒体文件） -->
-            <el-card class="right-card">
-                <template #header>任务模拟</template>
-                <el-descriptions :column="1" border size="small">
-                    <el-descriptions-item label="任务状态">
-                        <el-tag :type="task.active ? 'warning' : 'info'" size="small">
-                            {{ task.active ? (task.paused ? '暂停' : '执行中') : '空闲' }}
-                        </el-tag>
-                    </el-descriptions-item>
-                    <el-descriptions-item label="Flight ID">{{ task.flight_id || '-' }}</el-descriptions-item>
-                    <el-descriptions-item label="进度">{{ task.percent || 0 }}%</el-descriptions-item>
-                    <el-descriptions-item label="步骤">{{ task.current_step || '-' }} / 35</el-descriptions-item>
-                </el-descriptions>
-                <el-progress :percentage="task.percent || 0" :status="task.active ? undefined : 'success'" style="margin-top: 8px;"></el-progress>
-                <div style="margin-top: 8px;">
-                    <div style="font-size: 12px; color: #909399; margin-bottom: 4px;">媒体文件 ({{ media.length }})</div>
-                    <div v-for="f in media.slice(-5)" :key="f.name" style="font-size: 12px; color: #606266;">
-                        {{ f.name }} - {{ f.upload_time }}
-                    </div>
-                </div>
-            </el-card>
-
-            <!-- 位置模拟（Dock 版：机场位置=起飞点=返航点） -->
-            <el-card class="right-card">
-                <template #header>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div style="display: flex; align-items: center; gap: 8px;">
-                            <span>位置模拟</span>
-                            <el-radio-group v-model="mapMode" size="small" @change="onMapModeChange">
-                                <el-radio-button value="map" :disabled="!amapKeyApplied">地图</el-radio-button>
-                                <el-radio-button value="manual">手动</el-radio-button>
-                            </el-radio-group>
-                            <el-button size="small" text @click="showAmapConfigDialog = true">配置</el-button>
-                        </div>
-                        <el-button v-if="mapMode === 'manual'" size="small" type="primary" @click="saveLocation">保存</el-button>
-                    </div>
-                </template>
-                <!-- 地图模式 -->
-                <div v-if="mapMode === 'map'">
-                    <!-- 地址搜索 + 选点按钮 -->
-                    <div style="display: flex; gap: 4px; margin-bottom: 4px;">
-                        <el-autocomplete
-                            v-model="addressSearch"
-                            :fetch-suggestions="fetchAddressSuggestions"
-                            placeholder="输入地址搜索"
-                            size="small"
-                            clearable
-                            value-key="value"
-                            style="flex: 1;"
-                            @select="onAddressSelect"
-                        ></el-autocomplete>
-                        <el-button size="small" :type="selectingAirport ? 'warning' : 'default'" @click="startSelectAirport">
-                            {{ selectingAirport ? '点击地图' : '选点' }}
-                        </el-button>
-                        <el-button v-if="selectingAirport" size="small" @click="cancelSelectAirport">取消</el-button>
-                    </div>
-                    <!-- 地图容器 -->
-                    <div id="mapContainer" style="width: 100%; height: 240px; border: 1px solid #e4e7ed; border-radius: 4px;"></div>
-                </div>
-                <!-- 手动模式 -->
-                <div v-if="mapMode === 'manual'">
-                    <!-- 未配置 Key 时提示 -->
-                    <div v-if="!amapKeyApplied" style="margin-bottom: 8px; padding: 8px; background: #f5f7fa; border-radius: 4px; font-size: 12px; color: #909399;">
-                        点击「配置」按钮申请并填写高德地图 Key，可切换到地图模式
-                    </div>
-                    <!-- 经纬度+高度输入 -->
-                    <el-form label-width="60px" size="small">
-                        <el-form-item label="纬度">
-                            <el-input-number v-model="locationEdit.latitude" :precision="6" :step="0.000001" :controls="false" style="width: 100%;"></el-input-number>
-                        </el-form-item>
-                        <el-form-item label="经度">
-                            <el-input-number v-model="locationEdit.longitude" :precision="6" :step="0.000001" :controls="false" style="width: 100%;"></el-input-number>
-                        </el-form-item>
-                        <el-form-item label="高度(m)">
-                            <el-input-number v-model="locationEdit.height" :precision="1" :step="0.1" :controls="false" style="width: 100%;"></el-input-number>
-                        </el-form-item>
-                    </el-form>
-                </div>
-                <div style="font-size: 12px; color: #909399; margin-top: 4px;">
-                    机场位置作为起飞点与返航点，保存后重启依然有效。
-                </div>
-
-                <!-- 无人机实时位置 -->
-                <div style="margin-top: 12px; padding-top: 10px; border-top: 1px dashed #e4e7ed;">
-                    <div style="font-size: 13px; color: #303133; margin-bottom: 6px;">无人机位置</div>
-                    <el-descriptions :column="1" border size="small">
-                        <el-descriptions-item label="纬度">{{ dronePosition.activated ? dronePosition.latitude.toFixed(6) : '-' }}</el-descriptions-item>
-                        <el-descriptions-item label="经度">{{ dronePosition.activated ? dronePosition.longitude.toFixed(6) : '-' }}</el-descriptions-item>
-                        <el-descriptions-item label="高度(m)">{{ dronePosition.activated ? dronePosition.height.toFixed(1) : '-' }}</el-descriptions-item>
-                        <el-descriptions-item label="状态">{{ droneStatusLabel }}</el-descriptions-item>
-                    </el-descriptions>
-                    <div style="margin-top: 8px; display: flex; align-items: center; gap: 8px;">
-                        <el-button size="small" type="warning" :disabled="!canTriggerRcLost" @click="triggerRcLost">模拟失联</el-button>
-                        <el-select size="small" v-model="dronePosition.rc_lost_action" style="width: 110px;" @change="saveRcLostAction">
-                            <el-option label="悬停" :value="0"></el-option>
-                            <el-option label="降落" :value="1"></el-option>
-                            <el-option label="返航" :value="2"></el-option>
-                        </el-select>
-                    </div>
-                </div>
-            </el-card>
+            </el-tab-pane>
+            </el-tabs>
         `
     });
 }

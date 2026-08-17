@@ -15,6 +15,7 @@
 
 package ltd.cdmi.hivemind.simulator.http.api;
 
+import ltd.cdmi.dji.cloudapi.sdk.http.HttpApiPath;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.http.HivemindHttpClient;
 import org.slf4j.Logger;
@@ -43,8 +44,8 @@ public class StorageApi {
 
     private static final Logger log = LoggerFactory.getLogger(StorageApi.class);
 
-    /** 存储服务 API 路径前缀（与媒体/地图/设备拓扑的路径前缀不同） */
-    private static final String BASE_PATH = "/storage/api/v1/workspaces";
+    /** 存储服务 API 路径前缀（委托 SDK {@link HttpApiPath#STORAGE_BASE_PATH}） */
+    private static final String BASE_PATH = HttpApiPath.STORAGE_BASE_PATH;
 
     private final HivemindHttpClient httpClient;
     private final RuntimeConfig runtimeConfig;

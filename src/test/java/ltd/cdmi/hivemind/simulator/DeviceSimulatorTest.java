@@ -24,17 +24,17 @@ import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
 import ltd.cdmi.hivemind.simulator.device.DeviceMode;
 import ltd.cdmi.hivemind.simulator.device.DeviceState;
 import ltd.cdmi.hivemind.simulator.device.DeviceSimulator;
-import ltd.cdmi.hivemind.simulator.device.DeviceType;
-import ltd.cdmi.hivemind.simulator.device.Dock1OsdStrategy;
-import ltd.cdmi.hivemind.simulator.device.Dock3OsdBuilder;
-import ltd.cdmi.hivemind.simulator.device.Dock3OsdStrategy;
+import ltd.cdmi.dji.cloudapi.sdk.model.DroneModel;
+import ltd.cdmi.dji.cloudapi.sdk.model.RcModel;
 import ltd.cdmi.hivemind.simulator.device.DockOnlineService;
-import ltd.cdmi.hivemind.simulator.device.M4DDroneOsdBuilder;
-import ltd.cdmi.hivemind.simulator.device.PilotControllerOsdBuilder;
+import ltd.cdmi.hivemind.simulator.device.osd.Dock3OsdBuilder;
+import ltd.cdmi.hivemind.simulator.device.osd.M4DDroneOsdBuilder;
+import ltd.cdmi.hivemind.simulator.device.osd.RcPlusOsdBuilder;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticLogRecorder;
 import ltd.cdmi.hivemind.simulator.mqtt.DockTopicSchema;
 import ltd.cdmi.hivemind.simulator.mqtt.DrcMessage;
 import ltd.cdmi.hivemind.simulator.mqtt.MqttClientManager;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
@@ -61,6 +61,7 @@ class DeviceSimulatorTest {
                 new SimulatorProperties.Media("", false, 0, false, 0),
                 null,
                 null,
+                null,
                 null
         );
     }
@@ -74,20 +75,20 @@ class DeviceSimulatorTest {
 
     private DeviceSimulator newSimulator(ObjectMapper objectMapper, DeviceState state) {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
-        // 注入真实 Builder/Strategy：DeviceSimulator 重构为 Builder 模式后（TDD-SPEC 2.12），
-        // OSD 构造委托给 DockOsdBuilder/DroneOsdBuilder，命名风格由 OsdStrategy 提供。
+        // 注入真实 Builder：DeviceSimulator 重构为 Builder 模式后（TDD-SPEC 2.12），
+        // OSD 构造委托给 DockOsdBuilder/DroneOsdBuilder，所有 Dock 版本统一使用 snake_case。
         // 此处按 testProps() 配置的 DOCK3 + M4D 注入对应实现。
         return new DeviceSimulator(
                 testProps(), mqtt, state, objectMapper,
                 testRuntimeConfig(),
-                List.of(new Dock3OsdStrategy(), new Dock1OsdStrategy()),
                 List.of(new Dock3OsdBuilder()),
                 List.of(new M4DDroneOsdBuilder()),
-                List.of(new PilotControllerOsdBuilder()),
+                List.of(new RcPlusOsdBuilder()),
                 Mockito.mock(DiagnosticLogRecorder.class),
                 new DockTopicSchema());
     }
 
+    @DisplayName("补充测试：Dock OSD JSON 包含所有必需字段")
     @Test
     void dockOsdJsonContainsAllRequiredFields() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -123,10 +124,11 @@ class DeviceSimulatorTest {
 
         // sub_device 应包含无人机 SN 和型号（RuntimeConfig 默认 droneType=M4TD）
         JsonNode subDevice = data.path("sub_device");
-        assertEquals(DeviceType.M4TD.defaultSn(), subDevice.path("device_sn").asText());
-        assertEquals(DeviceType.M4TD.modelKey(), subDevice.path("device_model_key").asText());
+        assertEquals(DroneModel.M4TD.defaultSn(), subDevice.path("device_sn").asText());
+        assertEquals(DroneModel.M4TD.modelKey(), subDevice.path("device_model_key").asText());
     }
 
+    @DisplayName("补充测试：Drone OSD JSON 包含所有必需字段")
     @Test
     void droneOsdJsonContainsAllRequiredFields() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -137,10 +139,9 @@ class DeviceSimulatorTest {
         DeviceSimulator simulator = new DeviceSimulator(
                 testProps(), mqtt, state, objectMapper,
                 testRuntimeConfig(),
-                List.of(new Dock3OsdStrategy(), new Dock1OsdStrategy()),
                 List.of(new Dock3OsdBuilder()),
                 List.of(new M4DDroneOsdBuilder()),
-                List.of(new PilotControllerOsdBuilder()),
+                List.of(new RcPlusOsdBuilder()),
                 Mockito.mock(DiagnosticLogRecorder.class),
                 new DockTopicSchema());
 
@@ -249,6 +250,7 @@ class DeviceSimulatorTest {
         assertFalse(data.has("wireless_link_topo"), "wireless_link_topo 是 pushMode=1，不应在 OSD（应在 state topic）");
     }
 
+    @DisplayName("补充测试：DRC camera_osd_info_push 消息格式")
     @Test
     void drcCameraOsdInfoPushFormat() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -323,6 +325,7 @@ class DeviceSimulatorTest {
     /**
      * droneActivated=false 时不推送 Drone OSD，仅推送 Dock OSD。
      */
+    @DisplayName("TC-LOC-015：无人机不在舱且未激活时 OSD 不上报")
     @Test
     void droneOsdNotPublishedWhenNotActivated() {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -334,10 +337,9 @@ class DeviceSimulatorTest {
         DeviceSimulator simulator = new DeviceSimulator(
                 testProps(), mqtt, state, objectMapper,
                 testRuntimeConfig(),
-                List.of(new Dock3OsdStrategy(), new Dock1OsdStrategy()),
                 List.of(new Dock3OsdBuilder()),
                 List.of(new M4DDroneOsdBuilder()),
-                List.of(new PilotControllerOsdBuilder()),
+                List.of(new RcPlusOsdBuilder()),
                 Mockito.mock(DiagnosticLogRecorder.class),
                 new DockTopicSchema());
 
@@ -350,6 +352,7 @@ class DeviceSimulatorTest {
     /**
      * droneActivated=true 时推送 Dock OSD（3 条）+ Drone OSD（1 条），共 4 次。
      */
+    @DisplayName("TC-ONLINE-005：飞行器激活状态控制 drone OSD 推送")
     @Test
     void droneOsdPublishedWhenActivated() {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -360,10 +363,9 @@ class DeviceSimulatorTest {
         DeviceSimulator simulator = new DeviceSimulator(
                 testProps(), mqtt, state, objectMapper,
                 testRuntimeConfig(),
-                List.of(new Dock3OsdStrategy(), new Dock1OsdStrategy()),
                 List.of(new Dock3OsdBuilder()),
                 List.of(new M4DDroneOsdBuilder()),
-                List.of(new PilotControllerOsdBuilder()),
+                List.of(new RcPlusOsdBuilder()),
                 Mockito.mock(DiagnosticLogRecorder.class),
                 new DockTopicSchema());
 
@@ -375,6 +377,7 @@ class DeviceSimulatorTest {
 
     // ===== TC-BUILDER-013: Dock OSD 分多条推送 =====
 
+    @DisplayName("补充测试：Dock OSD 分多条推送")
     @Test
     void dockOsdPublishedAsMultipleMessages() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -385,10 +388,9 @@ class DeviceSimulatorTest {
         DeviceSimulator simulator = new DeviceSimulator(
                 testProps(), mqtt, state, objectMapper,
                 testRuntimeConfig(),
-                List.of(new Dock3OsdStrategy(), new Dock1OsdStrategy()),
                 List.of(new Dock3OsdBuilder()),
                 List.of(new M4DDroneOsdBuilder()),
-                List.of(new PilotControllerOsdBuilder()),
+                List.of(new RcPlusOsdBuilder()),
                 Mockito.mock(DiagnosticLogRecorder.class),
                 new DockTopicSchema());
 
@@ -423,7 +425,7 @@ class DeviceSimulatorTest {
 
         assertTrue(group1.has("backup_battery"), "Group 1 应包含 backup_battery");
         assertTrue(group1.has("maintain_status"), "Group 1 应包含 maintain_status");
-        assertTrue(group1.has("electric_supply_voltage"), "Group 1 应包含 electric_supply_voltage（OSD 封面字段）");
+        assertFalse(group1.has("electric_supply_voltage"), "Group 1 不应包含 electric_supply_voltage（仅 Dock1 上报，Dock3 未定义）");
         assertFalse(group1.has("mode_code"), "Group 1 不应包含 mode_code");
 
         assertTrue(group2.has("wireless_link"), "Group 2 应包含 wireless_link");
@@ -433,7 +435,7 @@ class DeviceSimulatorTest {
         assertTrue(group3.has("mode_code"), "Group 3 应包含 mode_code");
         assertTrue(group3.has("latitude"), "Group 3 应包含 latitude");
         assertTrue(group3.has("cover_state"), "Group 3 应包含 cover_state");
-        assertTrue(group3.has("putter_state"), "Group 3 应包含 putter_state（DJI OSD 示例有，三版均上报）");
+        assertFalse(group3.has("putter_state"), "Group 3 不应包含 putter_state（仅 Dock1 上报，Dock3 未定义）");
         assertFalse(group3.has("backup_battery"), "Group 3 不应包含 backup_battery");
     }
 
@@ -449,10 +451,9 @@ class DeviceSimulatorTest {
         DeviceSimulator simulator = new DeviceSimulator(
                 testProps(), mqtt, state, objectMapper,
                 testRuntimeConfig(),
-                List.of(new Dock3OsdStrategy(), new Dock1OsdStrategy()),
                 List.of(new Dock3OsdBuilder()),
                 List.of(new M4DDroneOsdBuilder()),
-                List.of(new PilotControllerOsdBuilder()),
+                List.of(new RcPlusOsdBuilder()),
                 Mockito.mock(DiagnosticLogRecorder.class),
                 new DockTopicSchema());
         simulator.publishOsd();
@@ -505,10 +506,9 @@ class DeviceSimulatorTest {
         DeviceSimulator simulator = new DeviceSimulator(
                 testProps(), mqtt, state, objectMapper,
                 testRuntimeConfig(),
-                List.of(new Dock3OsdStrategy(), new Dock1OsdStrategy()),
                 List.of(new Dock3OsdBuilder()),
                 List.of(new M4DDroneOsdBuilder()),
-                List.of(new PilotControllerOsdBuilder()),
+                List.of(new RcPlusOsdBuilder()),
                 Mockito.mock(DiagnosticLogRecorder.class),
                 new DockTopicSchema());
         simulator.publishOsd();
@@ -533,13 +533,13 @@ class DeviceSimulatorTest {
      * <p>默认使用 RC Plus 2（对齐 DJI RC Plus 2 文档），可通过 controllerType 参数切换型号。</p>
      */
     private String capturePilotOsdJson(ObjectMapper objectMapper, DeviceState state) {
-        return capturePilotOsdJson(objectMapper, state, DeviceType.RC_PLUS_2);
+        return capturePilotOsdJson(objectMapper, state, RcModel.RC_PLUS_2);
     }
 
     /**
      * 辅助：捕获 Pilot 遥控器 OSD JSON，指定遥控器型号。
      */
-    private String capturePilotOsdJson(ObjectMapper objectMapper, DeviceState state, DeviceType controllerType) {
+    private String capturePilotOsdJson(ObjectMapper objectMapper, DeviceState state, RcModel controllerType) {
         RuntimeConfig pilotConfig = testRuntimeConfig();
         pilotConfig.setDeviceMode(DeviceMode.PILOT);
         pilotConfig.setControllerType(controllerType);
@@ -547,10 +547,9 @@ class DeviceSimulatorTest {
         DeviceSimulator simulator = new DeviceSimulator(
                 testProps(), mqtt, state, objectMapper,
                 pilotConfig,
-                List.of(new Dock3OsdStrategy(), new Dock1OsdStrategy()),
                 List.of(new Dock3OsdBuilder()),
                 List.of(new M4DDroneOsdBuilder()),
-                List.of(new PilotControllerOsdBuilder()),
+                List.of(new RcPlusOsdBuilder()),
                 Mockito.mock(DiagnosticLogRecorder.class),
                 new DockTopicSchema());
         simulator.publishOsd();
@@ -561,6 +560,7 @@ class DeviceSimulatorTest {
 
     // ===== #8: live_capacity 三层嵌套 =====
 
+    @DisplayName("补充测试：live_capacity 不在 OSD 中（pushMode=1 应在 state topic）")
     @Test
     void dockOsdLiveCapacityThreeLayerNesting() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -593,6 +593,7 @@ class DeviceSimulatorTest {
 
     // ===== #9: drone_charge_state 是 struct（非 int） =====
 
+    @DisplayName("补充测试：drone_charge_state 为 struct 类型")
     @Test
     void dockOsdDroneChargeStateIsStruct() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -610,6 +611,7 @@ class DeviceSimulatorTest {
 
     // ===== #10: rainfall 是 int（非 double） =====
 
+    @DisplayName("补充测试：rainfall 为 int 类型")
     @Test
     void dockOsdRainfallIsInt() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -627,6 +629,7 @@ class DeviceSimulatorTest {
 
     // ===== #23: OSD 信封无 version 字段 =====
 
+    @DisplayName("补充测试：OSD 信封无 version 字段")
     @Test
     void dockOsdEnvelopeHasNoVersion() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -643,6 +646,7 @@ class DeviceSimulatorTest {
 
     // ===== #11: height（椭球高）和 elevation（相对起飞点）值正确 =====
 
+    @DisplayName("补充测试：height 与 elevation 值正确")
     @Test
     void droneOsdHeightElevationCorrect() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -663,6 +667,7 @@ class DeviceSimulatorTest {
 
     // ===== #15/#16: rtk_number 字段名，无 gps_number_in_rtcm =====
 
+    @DisplayName("补充测试：position_state 包含 rtk_number 非 rtcm_number")
     @Test
     void droneOsdHasRtkNumberNotRtcmNumber() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -685,6 +690,7 @@ class DeviceSimulatorTest {
      * RC Plus 2 OSD 字段对齐 DJI 文档（pushMode=0 的 OSD 字段）。
      * <p>参考：https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/pilot-to-cloud/mqtt/dji-rc-plus-2/properties.html
      */
+    @DisplayName("补充测试：RC Plus 2 OSD 字段对齐 DJI 文档")
     @Test
     void pilotOsdFieldsMatchDjiSpec() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -749,13 +755,14 @@ class DeviceSimulatorTest {
      * RC Plus OSD 字段差异化验证：无 drc_state、无 country。
      * <p>参考：https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/pilot-to-cloud/mqtt/rc-plus/properties.html
      */
+    @DisplayName("补充测试：RC Plus OSD 无 drc_state 和 country")
     @Test
     void pilotOsdRcPlusNoDrcStateNoCountry() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
         DeviceState state = new DeviceState();
         state.setOnline(true);
         state.setDroneActivated(true);
-        String json = capturePilotOsdJson(objectMapper, state, DeviceType.RC_PLUS);
+        String json = capturePilotOsdJson(objectMapper, state, RcModel.RC_PLUS);
         JsonNode data = objectMapper.readTree(json).path("data");
 
         // RC Plus 文档无 drc_state 字段
@@ -771,13 +778,14 @@ class DeviceSimulatorTest {
      * RC Pro OSD 字段差异化验证：有 drc_state、有 country。
      * <p>参考：https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/pilot-to-cloud/mqtt/rc-pro/properties.html
      */
+    @DisplayName("补充测试：RC Pro OSD 包含 country")
     @Test
     void pilotOsdRcProHasCountry() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
         DeviceState state = new DeviceState();
         state.setOnline(true);
         state.setDroneActivated(true);
-        String json = capturePilotOsdJson(objectMapper, state, DeviceType.RC_PRO);
+        String json = capturePilotOsdJson(objectMapper, state, RcModel.RC_PRO);
         JsonNode data = objectMapper.readTree(json).path("data");
 
         // RC Pro 文档有 country 字段
@@ -788,8 +796,9 @@ class DeviceSimulatorTest {
 
     // ===== #1/#2: update_topo 字段完整性（device_secret/nonce/thing_version/domain） =====
 
-    @Test
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-ONLINE-001：注册成功后自动上线（update_topo 字段结构）")
+    @Test
     void updateTopoDataContainsRequiredFields() throws Exception {
         RuntimeConfig config = testRuntimeConfig();
         DeviceState state = new DeviceState();
@@ -803,29 +812,30 @@ class DeviceSimulatorTest {
         Map<String, Object> data = (Map<String, Object>) method.invoke(service);
 
         // 网关顶层字段
-        assertEquals(String.valueOf(config.getDockType().getDomain()), data.get("domain"));
-        assertEquals(config.getDockType().getType(), data.get("type"));
-        assertEquals(config.getDockType().getSubType(), data.get("sub_type"));
+        assertEquals(String.valueOf(config.getDockType().domain()), data.get("domain"));
+        assertEquals(config.getDockType().type(), data.get("type"));
+        assertEquals(config.getDockType().subType(), data.get("sub_type"));
         assertNotNull(data.get("device_secret"));
         assertNotNull(data.get("nonce"));
-        assertEquals("3.0.0.0", data.get("thing_version"));
+        assertEquals(config.getThingVersion(), data.get("thing_version"));
 
         // sub_devices 元素字段
         List<Map<String, Object>> subDevices = (List<Map<String, Object>>) data.get("sub_devices");
         assertEquals(1, subDevices.size());
         Map<String, Object> sub = subDevices.get(0);
         assertEquals(config.getDroneSn(), sub.get("sn"));
-        assertEquals(String.valueOf(config.getDroneType().getDomain()), sub.get("domain"));
-        assertEquals(config.getDroneType().getType(), sub.get("type"));
-        assertEquals(config.getDroneType().getSubType(), sub.get("sub_type"));
+        assertEquals(String.valueOf(config.getDroneType().domain()), sub.get("domain"));
+        assertEquals(config.getDroneType().type(), sub.get("type"));
+        assertEquals(config.getDroneType().subType(), sub.get("sub_type"));
         assertNotNull(sub.get("device_secret"));
         assertNotNull(sub.get("nonce"));
-        assertEquals("3.0.0.0", sub.get("thing_version"));
+        assertEquals(config.getThingVersion(), sub.get("thing_version"));
         assertFalse(sub.containsKey("firmware_version"), "子设备不应有 firmware_version（应为 thing_version）");
     }
 
     // ===== #3/#4: sleep topo type 动态值（非硬编码 3） =====
 
+    @DisplayName("TC-ONLINE-008：飞行器休眠时发送 update_topo 通知平台")
     @Test
     void sleepTopoTypeMatchesDockType() throws Exception {
         RuntimeConfig config = testRuntimeConfig();
@@ -846,10 +856,10 @@ class DeviceSimulatorTest {
         JsonNode node = new ObjectMapper().readTree(json);
         JsonNode data = node.path("data");
 
-        // type 应为 dockType.getType()（Dock3=3），非硬编码
-        assertEquals(config.getDockType().getType(), data.path("type").asInt());
+        // type 应为 dockType.type()（Dock3=3），非硬编码
+        assertEquals(config.getDockType().type(), data.path("type").asInt());
         // domain 字段存在
-        assertEquals(String.valueOf(config.getDockType().getDomain()), data.path("domain").asText());
+        assertEquals(String.valueOf(config.getDockType().domain()), data.path("domain").asText());
         // sub_devices 为空数组
         assertTrue(data.path("sub_devices").isArray());
         assertEquals(0, data.path("sub_devices").size());
@@ -857,6 +867,7 @@ class DeviceSimulatorTest {
 
     // ===== TC-BUILDER-011: pushMode=0 简单字段完整覆盖（OSD 定频上报） =====
 
+    @DisplayName("补充测试：Dock OSD pushMode=0 简单字段完整")
     @Test
     void dockOsdPushMode0SimpleFieldsComplete() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -882,6 +893,7 @@ class DeviceSimulatorTest {
 
     // ===== TC-BUILDER-012: pushMode=0 结构体字段完整覆盖（OSD 定频上报） =====
 
+    @DisplayName("补充测试：Dock OSD pushMode=0 结构体字段完整")
     @Test
     void dockOsdPushMode0StructFieldsComplete() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -952,6 +964,7 @@ class DeviceSimulatorTest {
 
     // ===== TC-PROP-005: 机场上线推送 pushMode=1 简单属性到 state topic =====
 
+    @DisplayName("TC-PROP-005：机场上线推送 pushMode=1 简单属性到 state topic")
     @Test
     void dockStatePushMode1SimpleFieldsComplete() throws Exception {
         RuntimeConfig config = testRuntimeConfig();
@@ -989,6 +1002,7 @@ class DeviceSimulatorTest {
 
     // ===== TC-PROP-006: 机场上线推送 pushMode=1 复杂结构属性到 state topic =====
 
+    @DisplayName("TC-PROP-006：机场上线推送 pushMode=1 复杂结构属性到 state topic")
     @Test
     void dockStatePushMode1StructFieldsComplete() throws Exception {
         RuntimeConfig config = testRuntimeConfig();
@@ -1055,6 +1069,7 @@ class DeviceSimulatorTest {
 
     // ===== TC-BUILDER-002: M3D/M4D drone state 包含 wireless_link_topo（pushMode=1） =====
 
+    @DisplayName("补充测试：M4D drone state 包含 wireless_link_topo")
     @Test
     void droneStateM4dWirelessLinkTopoInState() throws Exception {
         RuntimeConfig config = testRuntimeConfig();
@@ -1085,6 +1100,7 @@ class DeviceSimulatorTest {
 
     // ===== TC-REG-018: airport_bind_status 返回非0 result 停止注册 =====
 
+    @DisplayName("补充测试：airport_bind_status 非0 result 停止注册")
     @Test
     void checkBindStatusResultNonZeroFailsAndTransfersCode() throws Exception {
         DockOnlineService service = newOnlineService();
@@ -1094,6 +1110,7 @@ class DeviceSimulatorTest {
         assertEquals("210230", result.code(), "应透传 result 码");
     }
 
+    @DisplayName("补充测试：airport_bind_status result=0 成功")
     @Test
     void checkBindStatusResultZeroSucceeds() throws Exception {
         DockOnlineService service = newOnlineService();
@@ -1108,6 +1125,7 @@ class DeviceSimulatorTest {
 
     // ===== TC-REG-016: airport_organization_get/bind 返回非0 result 停止注册 =====
 
+    @DisplayName("补充测试：airport_organization_get 非0 result 停止注册")
     @Test
     void checkOrgGetResultNonZeroFailsAndTransfersCode() throws Exception {
         DockOnlineService service = newOnlineService();
@@ -1117,6 +1135,7 @@ class DeviceSimulatorTest {
         assertEquals("210229", result.code(), "应透传 result 码");
     }
 
+    @DisplayName("补充测试：airport_organization_get result=0 成功")
     @Test
     void checkOrgGetResultZeroSucceeds() throws Exception {
         DockOnlineService service = newOnlineService();
@@ -1127,6 +1146,7 @@ class DeviceSimulatorTest {
         assertEquals("0", result.code());
     }
 
+    @DisplayName("补充测试：airport_organization_bind 非0 result 停止注册")
     @Test
     void checkOrgBindResultNonZeroFailsAndTransfersCode() throws Exception {
         DockOnlineService service = newOnlineService();
@@ -1136,8 +1156,9 @@ class DeviceSimulatorTest {
         assertEquals("210230", result.code(), "应透传 result 码");
     }
 
-    // ===== TC-REG-017: airport_organization_bind 返回 result=0 但 err_infos 非空停止注册 =====
+    // ===== TC-REG-017: airport_organization_bind 设备级绑定结果判断 =====
 
+    @DisplayName("airport_organization_bind err_infos 含非0 err_code 判定失败")
     @Test
     void checkOrgBindResultZeroWithErrInfosFailsAndTransfersFirstErrCode() throws Exception {
         DockOnlineService service = newOnlineService();
@@ -1147,10 +1168,39 @@ class DeviceSimulatorTest {
                 + "{\"err_code\":210232,\"sn\":\"drone-sn\"}"
                 + "]}}}");
         DockOnlineService.OnlineResult result = service.checkOrgBindResult(reply);
-        assertFalse(result.success(), "err_infos 非空应判定为失败");
-        assertEquals("210231", result.code(), "应透传第一个 err_code");
+        assertFalse(result.success(), "err_infos 含非0 err_code 应判定为失败");
+        assertEquals("210231", result.code(), "应透传第一个非0 err_code");
     }
 
+    @DisplayName("airport_organization_bind err_infos 全为0 err_code 判定成功")
+    @Test
+    void checkOrgBindResultZeroWithAllZeroErrCodesSucceeds() throws Exception {
+        DockOnlineService service = newOnlineService();
+        JsonNode reply = new ObjectMapper().readTree(
+                "{\"data\":{\"result\":0,\"output\":{\"err_infos\":["
+                + "{\"err_code\":0,\"sn\":\"dock-sn\"},"
+                + "{\"err_code\":0,\"sn\":\"drone-sn\"}"
+                + "]}}}");
+        DockOnlineService.OnlineResult result = service.checkOrgBindResult(reply);
+        assertTrue(result.success(), "err_infos 全为0 err_code 应判定为成功");
+        assertEquals("0", result.code());
+    }
+
+    @DisplayName("airport_organization_bind err_infos 混合 err_code 判定失败")
+    @Test
+    void checkOrgBindResultZeroWithMixedErrCodesFails() throws Exception {
+        DockOnlineService service = newOnlineService();
+        JsonNode reply = new ObjectMapper().readTree(
+                "{\"data\":{\"result\":0,\"output\":{\"err_infos\":["
+                + "{\"err_code\":0,\"sn\":\"dock-sn\"},"
+                + "{\"err_code\":210231,\"sn\":\"drone-sn\"}"
+                + "]}}}");
+        DockOnlineService.OnlineResult result = service.checkOrgBindResult(reply);
+        assertFalse(result.success(), "err_infos 含非0 err_code 应判定为失败");
+        assertEquals("210231", result.code(), "应透传第一个非0 err_code");
+    }
+
+    @DisplayName("airport_organization_bind 无 err_infos 成功")
     @Test
     void checkOrgBindResultZeroWithoutErrInfosSucceeds() throws Exception {
         DockOnlineService service = newOnlineService();
@@ -1160,6 +1210,7 @@ class DeviceSimulatorTest {
         assertEquals("0", result.code());
     }
 
+    @DisplayName("airport_organization_bind 空 err_infos 成功")
     @Test
     void checkOrgBindResultZeroWithEmptyErrInfosSucceeds() throws Exception {
         DockOnlineService service = newOnlineService();

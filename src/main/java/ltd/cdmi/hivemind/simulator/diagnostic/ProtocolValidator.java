@@ -20,6 +20,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonMappingException;
 import com.fasterxml.jackson.databind.JsonNode;
 
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.ServiceMethod;
+
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -149,52 +151,58 @@ public final class ProtocolValidator {
      * @return null=校验通过或该指令无枚举校验；DiagnosticCode.P-10=存在非法枚举值
      */
     public static DiagnosticCode validatePayloadEnum(String method, JsonNode data) {
-        switch (method) {
-            case "camera_frame_zoom" -> {
+        ServiceMethod svcMethod = ServiceMethod.fromMethodName(method).orElse(null);
+        if (svcMethod == null) {
+            return null; // 非负载控制方法或未知方法，无枚举校验
+        }
+        switch (svcMethod) {
+            case CAMERA_FRAME_ZOOM -> {
                 if (!isValidString(data, "camera_type", CAMERA_TYPES_FULL)) return DiagnosticCode.PLATFORM_INVALID_ENUM;
             }
-            case "camera_mode_switch" -> {
+            case CAMERA_MODE_SWITCH -> {
                 if (!isValidInt(data, "camera_mode", Set.of(0, 1, 2, 3))) return DiagnosticCode.PLATFORM_INVALID_ENUM;
             }
-            case "camera_aim" -> {
+            case CAMERA_AIM -> {
                 if (!isValidString(data, "camera_type", CAMERA_TYPES_FULL)) return DiagnosticCode.PLATFORM_INVALID_ENUM;
             }
-            case "camera_focal_length_set" -> {
+            case CAMERA_FOCAL_LENGTH_SET -> {
                 if (!isValidString(data, "camera_type", CAMERA_TYPES_FULL)) return DiagnosticCode.PLATFORM_INVALID_ENUM;
             }
-            case "gimbal_reset" -> {
+            case GIMBAL_RESET -> {
                 if (!isValidInt(data, "reset_mode", Set.of(0, 1, 2, 3))) return DiagnosticCode.PLATFORM_INVALID_ENUM;
             }
-            case "photo_storage_set" -> {
+            case PHOTO_STORAGE_SET -> {
                 if (!isValidStringArray(data, "photo_storage_settings", Set.of("current", "vision", "ir"))) return DiagnosticCode.PLATFORM_INVALID_ENUM;
             }
-            case "video_storage_set" -> {
+            case VIDEO_STORAGE_SET -> {
                 if (!isValidStringArray(data, "video_storage_settings", Set.of("current", "wide", "zoom", "ir"))) return DiagnosticCode.PLATFORM_INVALID_ENUM;
             }
-            case "camera_exposure_mode_set" -> {
+            case CAMERA_EXPOSURE_MODE_SET -> {
                 if (!isValidString(data, "camera_type", CAMERA_TYPES_VISIBLE)) return DiagnosticCode.PLATFORM_INVALID_ENUM;
                 if (!isValidInt(data, "exposure_mode", Set.of(1, 2, 3, 4))) return DiagnosticCode.PLATFORM_INVALID_ENUM;
             }
-            case "camera_exposure_set" -> {
+            case CAMERA_EXPOSURE_SET -> {
                 if (!isValidString(data, "camera_type", CAMERA_TYPES_VISIBLE)) return DiagnosticCode.PLATFORM_INVALID_ENUM;
                 if (!isValidString(data, "exposure_value", EXPOSURE_VALUES)) return DiagnosticCode.PLATFORM_INVALID_ENUM;
             }
-            case "camera_focus_mode_set" -> {
+            case CAMERA_FOCUS_MODE_SET -> {
                 if (!isValidString(data, "camera_type", CAMERA_TYPES_VISIBLE)) return DiagnosticCode.PLATFORM_INVALID_ENUM;
                 if (!isValidInt(data, "focus_mode", Set.of(0, 1, 2))) return DiagnosticCode.PLATFORM_INVALID_ENUM;
             }
-            case "camera_focus_value_set" -> {
+            case CAMERA_FOCUS_VALUE_SET -> {
                 if (!isValidString(data, "camera_type", CAMERA_TYPES_VISIBLE)) return DiagnosticCode.PLATFORM_INVALID_ENUM;
             }
-            case "camera_point_focus_action" -> {
+            case CAMERA_POINT_FOCUS_ACTION -> {
                 if (!isValidString(data, "camera_type", CAMERA_TYPES_VISIBLE)) return DiagnosticCode.PLATFORM_INVALID_ENUM;
             }
-            case "ir_metering_mode_set" -> {
+            case IR_METERING_MODE_SET -> {
                 if (!isValidInt(data, "mode", Set.of(0, 1, 2))) return DiagnosticCode.PLATFORM_INVALID_ENUM;
             }
-            // 以下指令无枚举值需校验：camera_photo_take, camera_photo_stop,
-            // camera_recording_start, camera_recording_stop, camera_screen_drag,
-            // camera_look_at, camera_screen_split, ir_metering_point_set, ir_metering_area_set
+            default -> {
+                // 以下指令无枚举值需校验：camera_photo_take, camera_photo_stop,
+                // camera_recording_start, camera_recording_stop, camera_screen_drag,
+                // camera_look_at, camera_screen_split, ir_metering_point_set, ir_metering_area_set
+            }
         }
         return null;
     }

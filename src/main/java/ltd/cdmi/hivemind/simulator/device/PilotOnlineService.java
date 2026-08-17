@@ -17,7 +17,12 @@ package ltd.cdmi.hivemind.simulator.device;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import ltd.cdmi.dji.cloudapi.sdk.model.DroneModel;
+import ltd.cdmi.dji.cloudapi.sdk.model.RcModel;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.StatusMethod;
+import ltd.cdmi.dji.cloudapi.sdk.telemetry.StateField;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
+import ltd.cdmi.hivemind.simulator.device.osd.DroneStateBuilder;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticCode;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticLogRecorder;
 import ltd.cdmi.hivemind.simulator.handler.MapElementSimulator;
@@ -144,13 +149,13 @@ public class PilotOnlineService {
         }
         if (!mqtt.isConnected()) {
             log.warn("MQTT 未连接，无法执行 Pilot 上线流程");
-            return DockOnlineService.OnlineResult.fail(DiagnosticCode.SIMULATOR_MQTT_NOT_CONNECTED);
+            return DockOnlineService.OnlineResult.fail(DiagnosticCode.SIMULATOR_MQTT_NOT_CONNECTED, DockOnlineService.OnlineResult.STEP_MQTT);
         }
         try {
             log.info("Pilot 模式上线：跳过注册流程，直接 update_topo");
             if (!sendUpdateTopo()) {
                 log.warn("update_topo 失败，停止上线流程");
-                return DockOnlineService.OnlineResult.fail(DiagnosticCode.PLATFORM_NO_REPLY);
+                return DockOnlineService.OnlineResult.fail(DiagnosticCode.PLATFORM_NO_REPLY, DockOnlineService.OnlineResult.STEP_UPDATE_TOPO);
             }
             state.setOnline(true);
             // Pilot 模式飞行器始终激活（遥控器直接控制，无收纳概念）
@@ -188,16 +193,16 @@ public class PilotOnlineService {
         String bid = UUID.randomUUID().toString();
         Map<String, Object> data = new LinkedHashMap<>();
         // RC Plus 2 行业版差异（TC-ONLINE-016）：网关设备不上报 domain
-        if (runtimeConfig.getControllerType() != DeviceType.RC_PLUS_2) {
-            data.put("domain", String.valueOf(runtimeConfig.getControllerType().getDomain()));
+        if (runtimeConfig.getControllerType() != RcModel.RC_PLUS_2) {
+            data.put("domain", String.valueOf(runtimeConfig.getControllerType().domain()));
         }
-        data.put("type", runtimeConfig.getControllerType().getType());
-        data.put("sub_type", runtimeConfig.getControllerType().getSubType());
+        data.put("type", runtimeConfig.getControllerType().type());
+        data.put("sub_type", runtimeConfig.getControllerType().subType());
         data.put("device_secret", "secret");
         data.put("nonce", "nonce");
         data.put("sub_devices", List.of());
-        data.put("thing_version", "3.0.0.0");
-        publishStatus("update_topo", tid, bid, data);
+        data.put("thing_version", runtimeConfig.getThingVersion());
+        publishStatus(StatusMethod.UPDATE_TOPO.methodName(), tid, bid, data);
 
         log.info("Pilot 设备已下线: controllerSn={}", runtimeConfig.getControllerSn());
     }
@@ -217,9 +222,9 @@ public class PilotOnlineService {
      */
     /** 构造 update_topo 上线报文数据（Pilot 模式飞行器始终激活，sub_devices 始终包含飞行器） */
     private Map<String, Object> buildUpdateTopoData() {
-        DeviceType controllerType = runtimeConfig.getControllerType();
-        DeviceType droneType = runtimeConfig.getDroneType();
-        boolean isRcPlus2 = (controllerType == DeviceType.RC_PLUS_2);
+        RcModel controllerType = runtimeConfig.getControllerType();
+        DroneModel droneType = runtimeConfig.getDroneType();
+        boolean isRcPlus2 = (controllerType == RcModel.RC_PLUS_2);
 
         // DJI update_topo: data 顶层包含网关设备的 domain（string）、type（int）、sub_type（int）、
         // device_secret（text）、nonce（text）、thing_version（text）
@@ -227,16 +232,16 @@ public class PilotOnlineService {
         // Pilot 模式飞行器始终激活，sub_devices 始终包含飞行器
         Map<String, Object> data = new LinkedHashMap<>();
         if (!isRcPlus2) {
-            data.put("domain", String.valueOf(controllerType.getDomain()));
+            data.put("domain", String.valueOf(controllerType.domain()));
         }
-        data.put("type", controllerType.getType());
-        data.put("sub_type", controllerType.getSubType());
+        data.put("type", controllerType.type());
+        data.put("sub_type", controllerType.subType());
         data.put("device_secret", "secret");
         data.put("nonce", "nonce");
         data.put("sub_devices", List.of(
                 buildSubDeviceData(droneType, isRcPlus2)
         ));
-        data.put("thing_version", "3.0.0.0");
+        data.put("thing_version", runtimeConfig.getThingVersion());
         return data;
     }
 
@@ -244,20 +249,20 @@ public class PilotOnlineService {
      * 构造子设备（飞行器）的 update_topo 数据。
      * <p>RC Plus 2 行业版不上报 domain 和 index 字段（TC-ONLINE-016）。</p>
      */
-    private Map<String, Object> buildSubDeviceData(DeviceType droneType, boolean isRcPlus2) {
+    private Map<String, Object> buildSubDeviceData(DroneModel droneType, boolean isRcPlus2) {
         Map<String, Object> sub = new LinkedHashMap<>();
         sub.put("sn", runtimeConfig.getDroneSn());
         if (!isRcPlus2) {
-            sub.put("domain", String.valueOf(droneType.getDomain()));
+            sub.put("domain", String.valueOf(droneType.domain()));
         }
-        sub.put("type", droneType.getType());
-        sub.put("sub_type", droneType.getSubType());
+        sub.put("type", droneType.type());
+        sub.put("sub_type", droneType.subType());
         if (!isRcPlus2) {
             sub.put("index", "A");
         }
         sub.put("device_secret", "secret");
         sub.put("nonce", "nonce");
-        sub.put("thing_version", "3.0.0.0");
+        sub.put("thing_version", runtimeConfig.getThingVersion());
         return sub;
     }
 
@@ -271,7 +276,7 @@ public class PilotOnlineService {
         if (!state.isOnline()) return;
         String tid = UUID.randomUUID().toString();
         String bid = UUID.randomUUID().toString();
-        publishStatus("update_topo", tid, bid, buildUpdateTopoData());
+        publishStatus(StatusMethod.UPDATE_TOPO.methodName(), tid, bid, buildUpdateTopoData());
         log.info("监控器连接，重发 update_topo 供监控器发现设备");
     }
 
@@ -284,7 +289,7 @@ public class PilotOnlineService {
 
         CompletableFuture<JsonNode> future = new CompletableFuture<>();
         pendingReplies.put(tid, future);
-        publishStatus("update_topo", tid, bid, data);
+        publishStatus(StatusMethod.UPDATE_TOPO.methodName(), tid, bid, data);
 
         try {
             JsonNode reply = future.get(REPLY_TIMEOUT_SECONDS, TimeUnit.SECONDS);
@@ -299,7 +304,7 @@ public class PilotOnlineService {
         } catch (Exception e) {
             pendingReplies.remove(tid);
             log.warn("等待 status_reply 超时（不影响上线，对齐 DJI 行为）: {}", e.getMessage());
-            diagnosticRecorder.record(DiagnosticCode.PLATFORM_NO_REPLY, "update_topo",
+            diagnosticRecorder.record(DiagnosticCode.PLATFORM_NO_REPLY, StatusMethod.UPDATE_TOPO.methodName(),
                     "平台未回复 status_reply（超时 " + REPLY_TIMEOUT_SECONDS + "s）");
             return true;
         }
@@ -358,7 +363,7 @@ public class PilotOnlineService {
         liveCapacity.put("device_list", List.of(device));
 
         Map<String, Object> data = new LinkedHashMap<>();
-        data.put("live_capacity", liveCapacity);
+        data.put(StateField.LIVE_CAPACITY.fieldName(), liveCapacity);
 
         Map<String, Object> envelope = new LinkedHashMap<>();
         envelope.put("bid", UUID.randomUUID().toString());
@@ -383,18 +388,18 @@ public class PilotOnlineService {
         Map<String, Object> data = new LinkedHashMap<>();
 
         // dongle_infos — 4G Dongle 信息（pushMode=1, r）
-        data.put("dongle_infos", buildDongleInfos());
+        data.put(StateField.DONGLE_INFOS.fieldName(), buildDongleInfos());
 
         // live_status — 网关当前整体直播状态推送（pushMode=1, r）
         // 无直播时为空数组
-        data.put("live_status", List.of());
+        data.put(StateField.LIVE_STATUS.fieldName(), List.of());
 
         // firmware_version — 固件版本（pushMode=1, r）
-        data.put("firmware_version", "0.0.0.0");
+        data.put(StateField.FIRMWARE_VERSION.fieldName(), "0.0.0.0");
 
         // cloud_control_auth — 本遥控器授权云控列表（pushMode=1, r）
         // 无授权时为空数组
-        data.put("cloud_control_auth", List.of());
+        data.put(StateField.CLOUD_CONTROL_AUTH.fieldName(), List.of());
 
         Map<String, Object> envelope = new LinkedHashMap<>();
         envelope.put("bid", UUID.randomUUID().toString());
@@ -451,7 +456,7 @@ public class PilotOnlineService {
      * <p>找不到对应 Builder 时跳过 state 上报并记录警告（避免上报错误字段集）。</p>
      */
     void publishDroneState() {
-        DeviceType droneType = runtimeConfig.getDroneType();
+        DroneModel droneType = runtimeConfig.getDroneType();
         DroneStateBuilder builder = null;
         for (DroneStateBuilder b : stateBuilders) {
             if (b.supports(droneType)) {

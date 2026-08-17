@@ -20,6 +20,7 @@ import ltd.cdmi.hivemind.simulator.device.DeviceMode;
 import ltd.cdmi.hivemind.simulator.device.DockOnlineService;
 import ltd.cdmi.hivemind.simulator.device.PilotOnlineService;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticCode;
+import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticLogRecorder;
 import ltd.cdmi.hivemind.simulator.mqtt.MonitorService;
 import org.springframework.web.bind.annotation.*;
 
@@ -42,17 +43,20 @@ public class MonitorController {
     private final PilotOnlineService pilotOnlineService;
     private final RuntimeConfig runtimeConfig;
     private final ObjectMapper objectMapper;
+    private final DiagnosticLogRecorder diagnosticRecorder;
 
     public MonitorController(MonitorService monitorService,
                              DockOnlineService dockOnlineService,
                              PilotOnlineService pilotOnlineService,
                              RuntimeConfig runtimeConfig,
-                             ObjectMapper objectMapper) {
+                             ObjectMapper objectMapper,
+                             DiagnosticLogRecorder diagnosticRecorder) {
         this.monitorService = monitorService;
         this.dockOnlineService = dockOnlineService;
         this.pilotOnlineService = pilotOnlineService;
         this.runtimeConfig = runtimeConfig;
         this.objectMapper = objectMapper;
+        this.diagnosticRecorder = diagnosticRecorder;
     }
 
     /** 连接到第三方平台 MQTT */
@@ -139,6 +143,36 @@ public class MonitorController {
     @GetMapping("/telemetry")
     public Map<String, Object> telemetry() {
         return monitorService.getTelemetry();
+    }
+
+    /** 获取所有设备的 HMS 告警（按设备 SN 分组，全量告警列表） */
+    @GetMapping("/hms-alerts")
+    public Map<String, Object> hmsAlerts() {
+        Map<String, List<Map<String, Object>>> alerts = monitorService.getHmsAlerts();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("data", alerts);
+        int total = alerts.values().stream().mapToInt(List::size).sum();
+        result.put("total", total);
+        return result;
+    }
+
+    /** 获取所有设备的航线任务进度（按设备 SN 分组） */
+    @GetMapping("/task-progress")
+    public Map<String, Object> taskProgress() {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("data", monitorService.getTaskProgress());
+        return result;
+    }
+
+    /** 获取所有设备的直播流（按设备 SN 分组，活跃推流列表） */
+    @GetMapping("/live-streams")
+    public Map<String, Object> liveStreams() {
+        Map<String, List<Map<String, Object>>> streams = monitorService.getLiveStreams();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("data", streams);
+        int total = streams.values().stream().mapToInt(List::size).sum();
+        result.put("total", total);
+        return result;
     }
 
     /** 下发控制指令 */
@@ -258,6 +292,24 @@ public class MonitorController {
         }
 
         Collections.reverse(result);
+        return result;
+    }
+
+    /** 获取诊断日志（P/S/M 诊断码记录） */
+    @GetMapping("/diagnostic-logs")
+    public Map<String, Object> diagnosticLogs() {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("logs", diagnosticRecorder.getLogs());
+        result.put("total", diagnosticRecorder.getLogs().size());
+        return result;
+    }
+
+    /** 清空诊断日志 */
+    @DeleteMapping("/diagnostic-logs")
+    public Map<String, Object> clearDiagnosticLogs() {
+        diagnosticRecorder.clear();
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("success", true);
         return result;
     }
 

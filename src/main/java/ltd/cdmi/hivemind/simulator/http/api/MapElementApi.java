@@ -16,6 +16,7 @@
 package ltd.cdmi.hivemind.simulator.http.api;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import ltd.cdmi.dji.cloudapi.sdk.http.HttpApiPath;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.http.HivemindHttpClient;
 import org.slf4j.Logger;
@@ -41,7 +42,8 @@ public class MapElementApi {
 
     private static final Logger log = LoggerFactory.getLogger(MapElementApi.class);
 
-    private static final String BASE_PATH = "/map/api/v1/workspaces";
+    /** 地图元素 API 路径前缀（委托 SDK {@link HttpApiPath#MAP_BASE_PATH}） */
+    private static final String BASE_PATH = HttpApiPath.MAP_BASE_PATH;
 
     private final HivemindHttpClient httpClient;
     private final RuntimeConfig runtimeConfig;

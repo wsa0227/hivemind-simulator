@@ -15,8 +15,13 @@
 
 package ltd.cdmi.hivemind.simulator.device;
 
+import ltd.cdmi.dji.cloudapi.sdk.model.DroneModel;
+
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
+import ltd.cdmi.hivemind.simulator.device.osd.M400DroneOsdBuilder;
+import ltd.cdmi.hivemind.simulator.device.osd.OsdContext;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -32,7 +37,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class M400DroneOsdBuilderTest {
 
-    private OsdContext ctx(DeviceType droneType) {
+    private OsdContext ctx(DroneModel droneType) {
         DeviceState state = Mockito.mock(DeviceState.class);
         Mockito.lenient().when(state.getDroneLatitude()).thenReturn(22.5);
         Mockito.lenient().when(state.getDroneLongitude()).thenReturn(113.9);
@@ -41,24 +46,25 @@ class M400DroneOsdBuilderTest {
         Mockito.when(config.getDroneType()).thenReturn(droneType);
 
         SimulatorProperties props = Mockito.mock(SimulatorProperties.class);
-        OsdStrategy strategy = new Dock3OsdStrategy();  // snake_case identity（Pilot 模式风格）
-        return new OsdContext(state, props, config, strategy);
+        return new OsdContext(state, props, config);
     }
 
     private OsdContext ctx() {
-        return ctx(DeviceType.M400);
+        return ctx(DroneModel.M400);
     }
 
+    @DisplayName("TC-BUILDER-016：M4E/M4T 复用 M400 DroneOsdBuilder（Pilot 模式）")
     @Test
     void supportsM400M4EM4T() {
         M400DroneOsdBuilder builder = new M400DroneOsdBuilder();
-        assertTrue(builder.supports(DeviceType.M400));
-        assertTrue(builder.supports(DeviceType.M4E));
-        assertTrue(builder.supports(DeviceType.M4T));
-        assertFalse(builder.supports(DeviceType.M4D));
-        assertFalse(builder.supports(DeviceType.M4TD));
+        assertTrue(builder.supports(DroneModel.M400));
+        assertTrue(builder.supports(DroneModel.M4E));
+        assertTrue(builder.supports(DroneModel.M4T));
+        assertFalse(builder.supports(DroneModel.M4D));
+        assertFalse(builder.supports(DroneModel.M4TD));
     }
 
+    @DisplayName("TC-BUILDER-002-A：M400 DroneOsdBuilder 选择与字段集（Pilot 模式）— 简化版 gimbal info")
     @Test
     @SuppressWarnings("unchecked")
     void osdContainsSimplifiedGimbalInfo() {
@@ -80,6 +86,7 @@ class M400DroneOsdBuilderTest {
         assertFalse(gimbal.containsKey("thermal_current_palette_style"));
     }
 
+    @DisplayName("TC-BUILDER-002-A：M400 DroneOsdBuilder 选择与字段集（Pilot 模式）— 无 cameras 数组")
     @Test
     void osdNoCameras() {
         M400DroneOsdBuilder builder = new M400DroneOsdBuilder();
@@ -87,6 +94,7 @@ class M400DroneOsdBuilderTest {
         assertFalse(osd.containsKey("cameras"), "M400 不上报 cameras 数组");
     }
 
+    @DisplayName("TC-BUILDER-002-A：M400 DroneOsdBuilder 选择与字段集（Pilot 模式）— mode_code/gear/firmware_version")
     @Test
     void osdContainsModeCodeGearFirmwareVersion() {
         M400DroneOsdBuilder builder = new M400DroneOsdBuilder();
@@ -97,6 +105,7 @@ class M400DroneOsdBuilderTest {
         assertTrue(osd.containsKey("firmware_version"), "M400 Pilot 属性列表第二部分确认 firmware_version pushMode=0");
     }
 
+    @DisplayName("TC-BUILDER-002-A：M400 DroneOsdBuilder 选择与字段集（Pilot 模式）— 无 distance_limit_status/rth_altitude")
     @Test
     void osdNoDistanceLimitFields() {
         M400DroneOsdBuilder builder = new M400DroneOsdBuilder();
@@ -105,6 +114,7 @@ class M400DroneOsdBuilderTest {
         assertFalse(osd.containsKey("rth_altitude"), "M400 Pilot 属性列表未列 rth_altitude");
     }
 
+    @DisplayName("TC-BUILDER-002-A：M400 DroneOsdBuilder 选择与字段集（Pilot 模式）— 共用字段")
     @Test
     void osdHasCommonFields() {
         M400DroneOsdBuilder builder = new M400DroneOsdBuilder();

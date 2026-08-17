@@ -70,6 +70,11 @@ simulator:
   map:
     user-name: ""
     element-pre-name: ""
+  # 物模型版本配置（update_topo 中 thing_version 字段）
+  # DJI 设备的物模型版本号，不同于固件版本。不同设备型号/固件版本对应不同版本。
+  # 默认值 1.2.3 为 DJI Dock3 最新物模型版本，可根据实际模拟设备调整
+  thing:
+    thing-version: "1.2.3"
 
 # ========================================
 # Web 控制台端口

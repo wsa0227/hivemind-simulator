@@ -15,6 +15,7 @@
 
 package ltd.cdmi.hivemind.simulator.http.api;
 
+import ltd.cdmi.dji.cloudapi.sdk.http.HttpApiPath;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.http.HivemindHttpClient;
 import org.slf4j.Logger;
@@ -43,8 +44,8 @@ public class DeviceTopoApi {
 
     private static final Logger log = LoggerFactory.getLogger(DeviceTopoApi.class);
 
-    /** 态势感知 API 路径前缀（与 MapElementApi 的 /map/api/v1/workspaces 不同） */
-    private static final String BASE_PATH = "/manage/api/v1/workspaces";
+    /** 态势感知 API 路径前缀（委托 SDK {@link HttpApiPath#MANAGE_BASE_PATH}） */
+    private static final String BASE_PATH = HttpApiPath.MANAGE_BASE_PATH;
 
     private final HivemindHttpClient httpClient;
     private final RuntimeConfig runtimeConfig;

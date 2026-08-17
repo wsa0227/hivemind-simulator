@@ -16,6 +16,10 @@
 package ltd.cdmi.hivemind.simulator.handler;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import ltd.cdmi.dji.cloudapi.sdk.codec.MessageCodec;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.esdk.CustomDataTransmissionToEsdkRequest;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.envelope.EventEnvelope;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.EventMethod;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticCode;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticLogRecorder;
@@ -85,7 +89,8 @@ public class EsdkSimulator {
 
     /** custom_data_transmission_to_esdk：记录 cloud→ESDK 自定义消息内容，返回 result=0 */
     private Map<String, Object> handleCustomDataToEsdk(JsonNode data) {
-        String value = data.path("value").asText();
+        var req = MessageCodec.fromJson(data.toString(), CustomDataTransmissionToEsdkRequest.class);
+        String value = req.value();
         lastCustomData = value;
         log.info("custom_data_transmission_to_esdk: value={}", value);
         return Map.of("result", 0);
@@ -105,23 +110,20 @@ public class EsdkSimulator {
         }
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("value", value);
-        publishEvent("custom_data_transmission_from_esdk", data);
+        publishEvent(EventMethod.CUSTOM_DATA_TRANSMISSION_FROM_ESDK, data);
         log.info("custom_data_transmission_from_esdk 已上报: value={}", value);
         return TriggerResult.ok();
     }
 
-    private void publishEvent(String method, Map<String, Object> data) {
-        Map<String, Object> envelope = new LinkedHashMap<>();
-        envelope.put("bid", UUID.randomUUID().toString());
-        envelope.put("tid", UUID.randomUUID().toString());
-        envelope.put("timestamp", System.currentTimeMillis());
-        envelope.put("need_reply", 0);
-        envelope.put("gateway", runtimeConfig.getDockSn());
-        envelope.put("method", method);
-        envelope.put("data", data);
+    private void publishEvent(EventMethod method, Map<String, Object> data) {
+        EventEnvelope envelope = EventEnvelope.of(
+                UUID.randomUUID().toString(),
+                UUID.randomUUID().toString(),
+                System.currentTimeMillis(),
+                method, data, runtimeConfig.getDockSn());
 
         String topic = dockTopicSchema.topic(dockTopicSchema.events(), runtimeConfig.getDockSn());
-        mqtt.publishJson(topic, envelope);
+        mqtt.publish(topic, MessageCodec.toJson(envelope));
     }
 
     // ==================== REST API 辅助 ====================

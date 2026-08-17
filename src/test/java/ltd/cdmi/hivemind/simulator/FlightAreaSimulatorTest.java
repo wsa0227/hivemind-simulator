@@ -28,6 +28,7 @@ import ltd.cdmi.hivemind.simulator.handler.FlightAreaSimulator.SyncStatus;
 import ltd.cdmi.hivemind.simulator.handler.FlightAreaSimulator.TriggerResult;
 import ltd.cdmi.hivemind.simulator.mqtt.DockTopicSchema;
 import ltd.cdmi.hivemind.simulator.mqtt.MqttClientManager;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
@@ -80,6 +81,7 @@ class FlightAreaSimulatorTest {
     // ==================== TC-FLIGHTAREA-001：drone_location 事件结构 ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-FLIGHTAREA-001：flight_areas_drone_location 事件结构")
     @Test
     void droneLocationEventStructure() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -93,11 +95,10 @@ class FlightAreaSimulatorTest {
         assertTrue(result.success());
         assertEquals(1, result.count());
 
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
 
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        JsonNode node = objectMapper.readTree(captor.getValue());
 
         // 顶层结构
         assertEquals("flight_areas_drone_location", node.path("method").asText());
@@ -117,6 +118,7 @@ class FlightAreaSimulatorTest {
     // ==================== TC-FLIGHTAREA-002：drone_location 字段完整性 ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-FLIGHTAREA-002：drone_location 字段完整性")
     @Test
     void droneLocationFieldsComplete() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -126,11 +128,10 @@ class FlightAreaSimulatorTest {
         FlightAreaSimulator simulator = createSimulator(mqtt);
         simulator.triggerDroneLocation(List.of(sampleLocation()));
 
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
 
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        JsonNode node = objectMapper.readTree(captor.getValue());
 
         JsonNode item = node.path("data").path("drone_locations").get(0);
         assertEquals(100.11, item.path("area_distance").asDouble());
@@ -141,6 +142,7 @@ class FlightAreaSimulatorTest {
     // ==================== TC-FLIGHTAREA-003：多区域一次上报 ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-FLIGHTAREA-003：多区域一次上报")
     @Test
     void multipleDroneLocations() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -156,11 +158,10 @@ class FlightAreaSimulatorTest {
         assertTrue(result.success());
         assertEquals(2, result.count());
 
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
 
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        JsonNode node = objectMapper.readTree(captor.getValue());
 
         assertEquals(2, node.path("data").path("drone_locations").size());
         assertEquals("d275c4e1-d864-4736-8b5d-5f5882ee9bdd",
@@ -171,6 +172,7 @@ class FlightAreaSimulatorTest {
 
     // ==================== TC-FLIGHTAREA-004：空列表拒绝 ====================
 
+    @DisplayName("TC-FLIGHTAREA-004：空列表拒绝")
     @Test
     void rejectEmptyLocations() {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -181,9 +183,10 @@ class FlightAreaSimulatorTest {
         TriggerResult result = simulator.triggerDroneLocation(List.of());
         assertFalse(result.success());
         assertEquals("INVALID_LOCATIONS", result.code());
-        Mockito.verify(mqtt, Mockito.never()).publishJson(Mockito.anyString(), Mockito.any());
+        Mockito.verify(mqtt, Mockito.never()).publish(Mockito.anyString(), Mockito.any());
     }
 
+    @DisplayName("TC-FLIGHTAREA-004：空列表拒绝（null）")
     @Test
     void rejectNullLocations() {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -199,6 +202,7 @@ class FlightAreaSimulatorTest {
     // ==================== TC-FLIGHTAREA-005：sync_progress 事件结构 ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-FLIGHTAREA-005：flight_areas_sync_progress 事件结构")
     @Test
     void syncProgressEventStructure() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -213,11 +217,10 @@ class FlightAreaSimulatorTest {
 
         assertTrue(result.success());
 
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
 
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        JsonNode node = objectMapper.readTree(captor.getValue());
 
         assertEquals("flight_areas_sync_progress", node.path("method").asText());
         // need_reply=1（需平台回复）
@@ -232,6 +235,7 @@ class FlightAreaSimulatorTest {
     // ==================== TC-FLIGHTAREA-006：sync_progress status 枚举值 ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-FLIGHTAREA-006：sync_progress status 枚举值")
     @Test
     void syncProgressStatusEnum() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -252,12 +256,11 @@ class FlightAreaSimulatorTest {
         for (int i = 0; i < statuses.length; i++) {
             simulator.triggerSyncProgress(statuses[i], 0, null);
 
-            ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
+            ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
             Mockito.verify(mqtt, Mockito.times(i + 1))
-                    .publishJson(Mockito.anyString(), captor.capture());
+                    .publish(Mockito.anyString(), captor.capture());
 
-            Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-            JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+            JsonNode node = objectMapper.readTree(captor.getValue());
             assertEquals(expectedCodes[i], node.path("data").path("status").asText());
         }
     }
@@ -265,6 +268,7 @@ class FlightAreaSimulatorTest {
     // ==================== TC-FLIGHTAREA-007：sync_progress file 字段结构 ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-FLIGHTAREA-007：sync_progress file 字段结构")
     @Test
     void syncProgressFileStructure() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -276,11 +280,10 @@ class FlightAreaSimulatorTest {
 
         simulator.triggerSyncProgress(SyncStatus.SYNCHRONIZING, 0, file);
 
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
 
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        JsonNode node = objectMapper.readTree(captor.getValue());
 
         JsonNode fileNode = node.path("data").path("file");
         assertEquals("geofence_abc.json", fileNode.path("name").asText());
@@ -288,6 +291,7 @@ class FlightAreaSimulatorTest {
     }
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-FLIGHTAREA-007：sync_progress 无 file 时不包含 file 字段")
     @Test
     void syncProgressWithoutFile() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -299,11 +303,10 @@ class FlightAreaSimulatorTest {
         // file=null 时 data 不含 file 字段
         simulator.triggerSyncProgress(SyncStatus.WAIT_SYNC, 0, null);
 
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
 
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        JsonNode node = objectMapper.readTree(captor.getValue());
 
         assertFalse(node.path("data").has("file"));
     }
@@ -311,6 +314,7 @@ class FlightAreaSimulatorTest {
     // ==================== TC-FLIGHTAREA-008：flight_areas_get 请求 + 收到 reply ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-FLIGHTAREA-008：flight_areas_get 请求结构")
     @Test
     void requestFlightAreasReceivesReply() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -358,6 +362,7 @@ class FlightAreaSimulatorTest {
     // ==================== TC-FLIGHTAREA-014：校验通过（合规文件名） ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-FLIGHTAREA-014：校验通过不自动上报 sync_progress")
     @Test
     void requestFlightAreasFileNameValid() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -400,6 +405,7 @@ class FlightAreaSimulatorTest {
     // ==================== TC-FLIGHTAREA-015：校验失败自动上报 sync_progress(fail) ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-FLIGHTAREA-015：校验失败自动上报 sync_progress(fail, reason=1)")
     @Test
     void requestFlightAreasFileNameInvalidAutoReportFail() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -434,17 +440,17 @@ class FlightAreaSimulatorTest {
         assertTrue(result.success());
         assertFalse(result.fileValid());
 
-        // 验证自动上报了 sync_progress(fail, reason=1)（共两次 publishJson：requests + events）
-        ArgumentCaptor<Object> allCaptor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt, Mockito.timeout(2000).times(2))
-                .publishJson(Mockito.anyString(), allCaptor.capture());
+        // 验证自动上报了 sync_progress(fail, reason=1)（events 通过 publish 发送）
+        ObjectMapper objectMapper = new ObjectMapper();
+        ArgumentCaptor<String> syncCaptor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt, Mockito.timeout(2000))
+                .publish(Mockito.contains("events"), syncCaptor.capture());
 
-        // 第二条消息是 events sync_progress
-        Map<String, Object> syncEnvelope = (Map<String, Object>) allCaptor.getAllValues().get(1);
-        assertEquals("flight_areas_sync_progress", syncEnvelope.get("method"));
-        Map<String, Object> data = (Map<String, Object>) syncEnvelope.get("data");
-        assertEquals("fail", data.get("status"));
-        assertEquals(1, data.get("reason"));
+        // events sync_progress 结构
+        JsonNode syncNode = objectMapper.readTree(syncCaptor.getValue());
+        assertEquals("flight_areas_sync_progress", syncNode.path("method").asText());
+        assertEquals("fail", syncNode.path("data").path("status").asText());
+        assertEquals(1, syncNode.path("data").path("reason").asInt());
     }
 
     // ==================== TC-FLIGHTAREA-016：空文件列表不校验 ====================
@@ -453,6 +459,7 @@ class FlightAreaSimulatorTest {
 
     // ==================== TC-FLIGHTAREA-009：flight_areas_get 超时处理 ====================
 
+    @DisplayName("TC-FLIGHTAREA-009：flight_areas_get 超时处理")
     @Test
     void requestFlightAreasTimeout() {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -469,6 +476,7 @@ class FlightAreaSimulatorTest {
 
     // ==================== TC-FLIGHTAREA-010：flight_areas_update service 应答 ====================
 
+    @DisplayName("TC-FLIGHTAREA-010：flight_areas_update service 应答")
     @Test
     void handleServiceUpdateReturnsResult() {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -488,6 +496,7 @@ class FlightAreaSimulatorTest {
 
     // ==================== TC-FLIGHTAREA-011：update 自动联动 get + M-2 诊断日志 ====================
 
+    @DisplayName("TC-FLIGHTAREA-011：flight_areas_update 自动联动 flight_areas_get")
     @Test
     void handleServiceUpdateAutoTriggerGetAndLog() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -515,6 +524,7 @@ class FlightAreaSimulatorTest {
 
     // ==================== TC-FLIGHTAREA-012：MQTT 未连接拒绝 ====================
 
+    @DisplayName("TC-FLIGHTAREA-012：MQTT 未连接拒绝（triggerDroneLocation）")
     @Test
     void rejectDroneLocationWhenMqttNotConnected() {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -525,9 +535,10 @@ class FlightAreaSimulatorTest {
         TriggerResult result = simulator.triggerDroneLocation(List.of(sampleLocation()));
         assertFalse(result.success());
         assertEquals("MQTT_NOT_CONNECTED", result.code());
-        Mockito.verify(mqtt, Mockito.never()).publishJson(Mockito.anyString(), Mockito.any());
+        Mockito.verify(mqtt, Mockito.never()).publish(Mockito.anyString(), Mockito.any());
     }
 
+    @DisplayName("TC-FLIGHTAREA-012：MQTT 未连接拒绝（triggerSyncProgress）")
     @Test
     void rejectSyncProgressWhenMqttNotConnected() {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -538,9 +549,10 @@ class FlightAreaSimulatorTest {
         TriggerResult result = simulator.triggerSyncProgress(SyncStatus.SYNCHRONIZED, 0, null);
         assertFalse(result.success());
         assertEquals("MQTT_NOT_CONNECTED", result.code());
-        Mockito.verify(mqtt, Mockito.never()).publishJson(Mockito.anyString(), Mockito.any());
+        Mockito.verify(mqtt, Mockito.never()).publish(Mockito.anyString(), Mockito.any());
     }
 
+    @DisplayName("TC-FLIGHTAREA-012：MQTT 未连接拒绝（requestFlightAreas）")
     @Test
     void rejectRequestFlightAreasWhenMqttNotConnected() {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);

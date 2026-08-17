@@ -7,13 +7,25 @@
 ![DJI Cloud API](https://img.shields.io/badge/DJI%20Cloud%20API-compatible-blue.svg)
 ![Coverage](https://img.shields.io/badge/coverage-JaCoCo-blue.svg)
 
-模拟 DJI Dock（Dock1/Dock2/Dock3）机场及其配套飞行器（M30/M3D/M4D 系列）的完整云端交互流程，按 DJI Cloud API 协议经 MQTT 与巡飞平台（hivemind）通信。
+> 开发大疆 Cloud API 后端，最头疼的不是代码难写，是没有设备。
 
-## 项目价值
+代码写完了，手头没有机场，没有飞行器。注册流程跑不通，OSD 上报没法测，航线任务、直播推流、媒体上传、HMS 告警，每一环都需要真实设备来验证。更现实的问题是设备不够分——开发要调航线任务，测试要跑回归，一套机场两拨人抢。等真机到位，开发周期已经拉长几个星期。同一个 bug 想复现第二次，得等天气、等电量、等空域。
 
-核心价值：**比真机更快捷地验证巡飞平台代码正确性**（状态可控、场景可复现、迭代周期短），同时让开发测试不必依赖真实机场硬件。
+hivemind-simulator 把 Dock1/Dock2/Dock3 三代机场、配套飞行器（M30/M3D/M4D 系列）和 Pilot 上云遥控器（RC Plus/RC Pro）全装进了一个程序里。不需要任何真实硬件，按 DJI Cloud API 协议经 MQTT 与你的后端平台通信。
 
-> 详见 [设计文档](docs/superpowers/specs/2026-08-08-dji-dock-simulator-design.md)。
+**一句话定位：比真机更快捷地验证平台代码正确性**——状态可控、场景可复现、迭代周期从"天"缩到"秒"。
+
+## 解决什么问题
+
+| 痛点 | 解法 |
+|---|---|
+| 没有设备，代码写完没法跑 | 一台电脑模拟全套设备，不需要任何真实硬件 |
+| 设备不够分，开发测试互相抢 | 每人装一份，各自独立运行，互不干扰 |
+| 真机状态不可控，bug 难复现 | 状态完全可控，场景随时可复现 |
+| 型号不全，没法覆盖所有机型 | 切下拉框换机型，不花一分钱测遍所有组合 |
+| 机群测试买不起十几套机场 | 开多个实例，模拟多机同时在线并发压测 |
+
+> 设计详情见 [设计文档](docs/superpowers/specs/2026-08-08-dji-dock-simulator-design.md)。
 
 ## 适用场景
 
@@ -51,20 +63,30 @@
 
 ## 功能特性
 
-- **多机型支持**：Dock1/Dock2/Dock3 + M30/M3D/M4D 系列飞行器
-- **完整注册流程**：config → airport_bind_status → airport_organization_get → airport_organization_bind，注册成功后 update_topo 上线
-- **OSD/State 上报**：按设备类型构造差异化字段，支持事件性属性上报
-- **航线任务模拟**：接收平台下发任务，按时间推进进度并上报媒体文件
-- **直播推流**：支持 FFmpeg WHIP 真实推流（WebRTC），视频循环播放持续推流
-- **媒体上传**：模拟飞行后媒体文件上传流程
-- **HMS 告警**：完整 HMS 错误码映射与上报
-- **DRC 远程指挥**：支持 DRC 指令通道
-- **飞行控制**：一键起飞/返航/降落模拟
-- **属性设置**：响应平台属性设置指令
-- **位置模拟**：高德地图选点（自动获取海拔）或手动输入坐标，地址搜索定位
-- **诊断系统**：协议覆盖率统计、规格校验、MQTT 消息日志
-- **监控器页面**：独立 MQTT 客户端，实时监听平台消息用于调试
-- **桌面端打包**：Tauri 打包为 Windows 安装包，内置 JRE
+### 两种模式，覆盖大疆云端对接两条核心链路
+
+- **Dock 模式**：模拟机场+飞行器的完整场景，从设备注册、上线、OSD 上报到航线任务、直播推流、媒体上传
+- **Pilot 模式**（v1.1.0 新增）：模拟遥控器直接上云，RC Plus / RC Plus 2 / RC Pro 搭配各种飞行器，走独立的 DRC 协议策略
+
+### 协议覆盖
+
+- **完整注册流程**：config → airport_bind_status → airport_organization_get → airport_organization_bind → update_topo 上线
+- **OSD/State 上报**：按设备类型构造差异化字段（Builder+策略模式），不同机型字段精确区分
+- **航线任务模拟**：flighttask_prepare 到 flighttask_execute，6 步进度推进，支持暂停/恢复/取消/停止，任务完成后自动触发媒体上传
+- **直播推流**：FFmpeg WHIP 真实 WebRTC 推流（非纯协议应答），视频循环播放持续推流，不支持 WHIP 时自动降级 RTMP
+- **媒体上传**：storage_config_get 拿 STS 凭证，S3 兼容协议上传到对象存储（阿里 OSS/AWS/MinIO/华为 OBS），file_upload_callback 逐个上报等平台确认
+- **DRC 远程指挥**：摇杆控制、应急停止、迫降、相机夜视、补光灯、喊话器，20+ 下行指令
+- **指令飞行**：一键起飞、flyto 目标点、飞行和负载控制权抢夺，异步双阶段确认
+- **远程调试**：同步 Cmd 和异步 Job 指令，开盖/推杆/充电/重启/格式化/eSIM/RTK 标定，三 Dock 指令集差异精确处理
+- **HMS 告警**：7 种告警场景（风速/雨量/图传/高度/距离/电量），可组合触发验证返航决策
+- **其他**：自定义飞行区、远程解禁（7 种证书类型）、PSDK 喊话器、ESDK 互联互通、远程日志、OTA 固件升级、AirSense
+
+### 两个工具，一个闭环
+
+- **模拟器**：扮演设备，与平台通信，左侧实时滚动展示 MQTT 收发报文
+- **监控器**：独立 MQTT 客户端，以第三方视角监听平台消息，支持主动下发指令（飞行控制、负载控制、远程调试等）
+- **诊断系统**：协议覆盖率统计、MQTT 消息规格校验、三层错误码体系（P/S/M 区分平台侧/模拟器侧/协议推断侧）
+- **桌面端打包**：Tauri 打包为 Windows 安装包，内置 JRE，不需要装 Java
 
 ## 架构概览
 
@@ -151,11 +173,39 @@ mvn compile
 mvn package -DskipTests
 
 # 运行
-java -jar target/dji-dock-simulator-1.0.0.jar
+java -jar target/dji-dock-simulator-1.1.2.jar
 
 # 或直接运行
 mvn spring-boot:run
 ```
+
+### 方式三：Docker 部署（含 EMQX）
+
+一键启动模拟器 + EMQX MQTT Broker，无需手动安装 Java 和 EMQX。
+
+```bash
+# 一键构建并启动（Windows）
+.\docker-build.ps1
+
+# 或手动执行
+mvn package -DskipTests
+docker compose up -d
+```
+
+启动后访问：
+- 模拟器：http://localhost:9090
+- EMQX Dashboard：http://localhost:18083（admin/public）
+
+常用命令：
+
+```bash
+docker compose logs -f simulator   # 查看模拟器日志
+docker compose restart simulator   # 重启模拟器
+docker compose down                # 停止所有服务
+docker compose up -d --build       # 重新构建并启动
+```
+
+> **说明**：EMQX 默认允许匿名连接，模拟器可直接注册。如需认证，在 EMQX Dashboard 中配置用户后，修改 `docker-compose.yml` 的 `MQTT_USERNAME` / `MQTT_PASSWORD`。直播真实推流和媒体上传需在 `docker-compose.yml` 的 `volumes` 中挂载文件目录。
 
 ### 配置
 
@@ -306,24 +356,23 @@ hivemind-simulator/
 
 以下为暂未支持、计划演进的方向，欢迎在 Issue 中讨论或认领（标注 `good first issue` 的适合首次贡献）：
 
-- [ ] 固件升级、远程日志、自定义飞行区
 - [ ] 真实 KMZ 航线解析（当前按时间假推进进度）
 - [ ] 多机模拟（当前为单机）
-- [ ] Docker 化部署（docker-compose 含 EMQX）
-- [ ] 英文 README 与国际化 UI
-- [ ] 更多机型（如 M4E 等）
 
 > 当前与历史变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 交流与支持
 
 <p align="center">
-  <img src="assets/friendCode.png" alt="微信二维码" width="220" />
+  <img src="assets/group.png" alt="技术交流群" width="200" />
+  &nbsp;&nbsp;
+  <img src="assets/friendCode.png" alt="微信二维码" width="200" />
 </p>
 
+- 技术交流群：扫码进群（左）
 - 问题反馈与功能建议：请提交 [Issue](https://github.com/cdmiltd/hivemind-simulator/issues)
 - 贡献代码：请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)
-- 微信沟通：扫码添加（上方二维码）
+- 微信沟通：扫码添加（右）
 
 ## 支持作者
 

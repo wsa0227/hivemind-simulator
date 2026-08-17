@@ -18,8 +18,16 @@ package ltd.cdmi.hivemind.simulator.device;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import ltd.cdmi.dji.cloudapi.sdk.model.DockModel;
+import ltd.cdmi.dji.cloudapi.sdk.model.DroneModel;
+import ltd.cdmi.dji.cloudapi.sdk.model.RcModel;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.DrcUpMethod;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
+import ltd.cdmi.hivemind.simulator.device.osd.DockOsdBuilder;
+import ltd.cdmi.hivemind.simulator.device.osd.DroneOsdBuilder;
+import ltd.cdmi.hivemind.simulator.device.osd.OsdContext;
+import ltd.cdmi.hivemind.simulator.device.osd.RcOsdBuilder;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticCode;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticLogRecorder;
 import ltd.cdmi.hivemind.simulator.mqtt.DockTopicSchema;
@@ -42,8 +50,8 @@ import java.util.concurrent.TimeUnit;
  * 设备模拟器：0.5Hz 构造并发布 Dock + Drone 的 OSD 遥测数据。
  * <p>仅当 {@link DeviceState#isOnline()} 为 true 时上报。</p>
  * <p>字段构造委托给 {@link DockOsdBuilder}（机场字段集）和 {@link DroneOsdBuilder}（飞行器字段集），
- * 字段命名风格由 {@link OsdStrategy} 按 dockType 动态切换（Dock3 用 snake_case，Dock1/Dock2 用 camelCase）。
- * 三者通过 {@link OsdContext} 协作，实现"字段集"与"命名风格"两个维度解耦。</p>
+ * 所有 Dock 版本统一使用 snake_case 字段命名，字段名直接引用 {@link ltd.cdmi.dji.cloudapi.sdk.telemetry.OsdField} 枚举。
+ * 两者通过 {@link OsdContext} 协作。</p>
  */
 @Component
 public class DeviceSimulator {
@@ -57,10 +65,9 @@ public class DeviceSimulator {
     private final DeviceState state;
     private final ObjectMapper objectMapper;
     private final RuntimeConfig runtimeConfig;
-    private final List<OsdStrategy> strategies;
     private final List<DockOsdBuilder> dockBuilders;
     private final List<DroneOsdBuilder> droneBuilders;
-    private final List<ControllerOsdBuilder> controllerBuilders;
+    private final List<RcOsdBuilder> rcBuilders;
     private final DiagnosticLogRecorder diagnosticRecorder;
     private final DockTopicSchema dockTopicSchema;
 
@@ -68,10 +75,9 @@ public class DeviceSimulator {
 
     public DeviceSimulator(SimulatorProperties props, MqttClientManager mqtt, DeviceState state,
                            ObjectMapper objectMapper, RuntimeConfig runtimeConfig,
-                           List<OsdStrategy> strategies,
                            List<DockOsdBuilder> dockBuilders,
                            List<DroneOsdBuilder> droneBuilders,
-                           List<ControllerOsdBuilder> controllerBuilders,
+                           List<RcOsdBuilder> rcBuilders,
                            DiagnosticLogRecorder diagnosticRecorder,
                            DockTopicSchema dockTopicSchema) {
         this.props = props;
@@ -79,36 +85,19 @@ public class DeviceSimulator {
         this.state = state;
         this.objectMapper = objectMapper;
         this.runtimeConfig = runtimeConfig;
-        this.strategies = strategies;
         this.dockBuilders = dockBuilders;
         this.droneBuilders = droneBuilders;
-        this.controllerBuilders = controllerBuilders;
+        this.rcBuilders = rcBuilders;
         this.diagnosticRecorder = diagnosticRecorder;
         this.dockTopicSchema = dockTopicSchema;
     }
 
     /**
-     * 根据当前 dockType 返回对应的 OSD 命名策略。
-     * <p>DOCK3 → Dock3OsdStrategy（snake_case）；DOCK1/DOCK2 → Dock1OsdStrategy（camelCase）。</p>
-     */
-    private OsdStrategy currentStrategy() {
-        DeviceType dockType = runtimeConfig.getDockType();
-        String targetVersion = (dockType == DeviceType.DOCK3) ? "dock3" : "dock1";
-        for (OsdStrategy s : strategies) {
-            if (s.version().equals(targetVersion)) {
-                return s;
-            }
-        }
-        return strategies.get(0); // 兜底
-    }
-
-    /**
      * 根据当前 dockType 选择机场 OSD Builder。
-     * <p>使用 {@link DockOsdBuilder#supports(DeviceType)} 匹配，与 version() 解耦：
-     * Dock1/Dock2 共用 "dock1" 策略但字段集不同，需通过 supports 精确匹配。</p>
+     * <p>使用 {@link DockOsdBuilder#supports(DockModel)} 匹配。</p>
      */
     private DockOsdBuilder selectDockBuilder() {
-        DeviceType dockType = runtimeConfig.getDockType();
+        DockModel dockType = runtimeConfig.getDockType();
         for (DockOsdBuilder b : dockBuilders) {
             if (b.supports(dockType)) {
                 return b;
@@ -121,7 +110,7 @@ public class DeviceSimulator {
      * 根据当前 droneType 选择飞行器 OSD Builder。
      */
     private DroneOsdBuilder selectDroneBuilder() {
-        DeviceType droneType = runtimeConfig.getDroneType();
+        DroneModel droneType = runtimeConfig.getDroneType();
         for (DroneOsdBuilder b : droneBuilders) {
             if (b.supports(droneType)) {
                 return b;
@@ -133,14 +122,14 @@ public class DeviceSimulator {
     /**
      * 根据当前 controllerType 选择遥控器 OSD Builder（Pilot 模式）。
      */
-    private ControllerOsdBuilder selectControllerBuilder() {
-        DeviceType controllerType = runtimeConfig.getControllerType();
-        for (ControllerOsdBuilder b : controllerBuilders) {
+    private RcOsdBuilder selectRcBuilder() {
+        RcModel controllerType = runtimeConfig.getControllerType();
+        for (RcOsdBuilder b : rcBuilders) {
             if (b.supports(controllerType)) {
                 return b;
             }
         }
-        return controllerBuilders.get(0); // 兜底
+        return rcBuilders.get(0); // 兜底
     }
 
     @PostConstruct
@@ -170,13 +159,6 @@ public class DeviceSimulator {
         diagnosticRecorder.record(DiagnosticCode.MONITOR_SIMULATOR_INFERENCE, "drone_osd_track_id", trackIdInference);
         log.warn("[M-2] 飞行器 OSD track_id 字段文档未明确，按真机示例上报，待真机验证");
 
-        // M-2 诊断日志：Dock putter_state 字段，Dock1 文档确认有，Dock2/Dock3 文档属性列表无但 OSD 示例有
-        String putterStateInference = "机场 OSD putter_state 字段：Dock1 properties 文档属性列表明确有此字段（推杆状态，pushMode=0, r），"
-            + "但 Dock2/Dock3 properties 文档属性列表无此字段。DJI OSD 结构示例（topic-definition.html）和 Dock2 设备属性推送示例中均包含 putter_state。"
-            + "模拟器三版均上报 putter_state=0（关闭），Dock2/Dock3 待真机验证";
-        diagnosticRecorder.record(DiagnosticCode.MONITOR_SIMULATOR_INFERENCE, "dock_osd_putter_state", putterStateInference);
-        log.warn("[M-2] Dock2/Dock3 putter_state 文档属性列表无但示例有，三版均上报，待真机验证");
-
         // M-2 诊断日志：飞行器负载属性上报，measure_target_* 字段为模拟值（无测距场景）
         String payloadInference = "飞行器 OSD 负载属性上报：DJI 文档「负载属性上报」明确以负载索引（{type-subtype-gimbalIndex}）为 key 上报相机属性，"
             + "OSD（pushMode=0）包含 gimbal_pitch/roll/yaw + measure_target_* + zoom_factor + thermal_*（仅 thermal 机型）。"
@@ -184,13 +166,6 @@ public class DeviceSimulator {
             + "模拟器不模拟测距场景，measure_target_error_state=3（NO_SIGNAL），其余 measure_target_* 为 0。负载索引按机型自动匹配（M30→52-0-0, M3D→80-0-0, M4D→98-0-0），待真机验证";
         diagnosticRecorder.record(DiagnosticCode.MONITOR_SIMULATOR_INFERENCE, "drone_osd_payload", payloadInference);
         log.warn("[M-2] 飞行器负载属性 measure_target_* 为模拟值（无测距场景），待真机验证");
-
-        // M-2 诊断日志：electric_supply_voltage 是 OSD 封面字段，但 Dock2/Dock3 属性列表无
-        String esvInference = "机场 OSD electric_supply_voltage 字段：topic-definition.html OSD 结构示例（封面字段）中包含此字段，"
-            + "但 Dock2/Dock3 properties 文档属性列表无此字段，仅 Dock1 属性列表有。"
-            + "模拟器三版均上报 electric_supply_voltage（从 DeviceState 读取），Dock2/Dock3 待真机验证";
-        diagnosticRecorder.record(DiagnosticCode.MONITOR_SIMULATOR_INFERENCE, "dock_osd_electric_supply_voltage", esvInference);
-        log.warn("[M-2] electric_supply_voltage 是 OSD 封面字段，Dock2/Dock3 属性列表无，三版均上报，待真机验证");
 
         // M-2 诊断日志：Dock1 OSD 示例用 air_conditioner_mode（标量），但属性列表用 air_conditioner（struct）
         String acInference = "机场 OSD air_conditioner 字段：Dock1/Dock2/Dock3 属性列表均标注为 struct（含 air_conditioner_state + switch_time），"
@@ -220,13 +195,13 @@ public class DeviceSimulator {
             return;
         }
         try {
-            OsdContext ctx = new OsdContext(state, props, runtimeConfig, currentStrategy());
+            OsdContext ctx = new OsdContext(state, props, runtimeConfig);
 
-            // 网关 OSD（始终推送）：Dock 模式推送 Dock OSD（分多条），Pilot 模式推送 Controller OSD（单条）
+            // 网关 OSD（始终推送）：Dock 模式推送 Dock OSD（分多条），Pilot 模式推送 RC OSD（单条）
             String gatewaySn = runtimeConfig.getGatewaySn();
             String gatewayOsdTopic = dockTopicSchema.topic(dockTopicSchema.osd(), gatewaySn);
             if (runtimeConfig.getDeviceMode() == DeviceMode.PILOT) {
-                mqtt.publish(gatewayOsdTopic, wrapOsd(selectControllerBuilder().buildControllerOsd(ctx), gatewaySn));
+                mqtt.publish(gatewayOsdTopic, wrapOsd(selectRcBuilder().buildRcOsd(ctx), gatewaySn));
             } else {
                 // 对齐 DJI 文档「机场的设备属性推送是分多条推送的」（Dock3 properties 文档「设备属性推送」章节）
                 for (Map<String, Object> data : selectDockBuilder().buildDockOsd(ctx)) {
@@ -264,22 +239,22 @@ public class DeviceSimulator {
         droneState.put("night_lights_state", state.isNightLightsState() ? 1 : 0);
         droneState.put("landing_type", 0);
         droneState.put("landing_protection_type", 0);
-        mqtt.publishJson(drcUpTopic, DrcMessage.event("drc_drone_state_push", droneState));
+        mqtt.publishJson(drcUpTopic, DrcMessage.event(DrcUpMethod.DRC_DRONE_STATE_PUSH.methodName(), droneState));
 
         // drc_camera_state_push：相机状态
-        mqtt.publishJson(drcUpTopic, DrcMessage.event("drc_camera_state_push", buildDrcCameraState()));
+        mqtt.publishJson(drcUpTopic, DrcMessage.event(DrcUpMethod.DRC_CAMERA_STATE_PUSH.methodName(), buildDrcCameraState()));
 
         // drc_camera_osd_info_push：摄像头 OSD
-        mqtt.publishJson(drcUpTopic, DrcMessage.event("drc_camera_osd_info_push", buildDrcCameraOsdInfo()));
+        mqtt.publishJson(drcUpTopic, DrcMessage.event(DrcUpMethod.DRC_CAMERA_OSD_INFO_PUSH.methodName(), buildDrcCameraOsdInfo()));
 
         // hsi_info_push：避障信息上报
-        mqtt.publishJson(drcUpTopic, DrcMessage.event("hsi_info_push", buildHsiInfo()));
+        mqtt.publishJson(drcUpTopic, DrcMessage.event(DrcUpMethod.HSI_INFO_PUSH.methodName(), buildHsiInfo()));
 
         // delay_info_push：图传链路延时信息上报
-        mqtt.publishJson(drcUpTopic, DrcMessage.event("delay_info_push", buildDelayInfo()));
+        mqtt.publishJson(drcUpTopic, DrcMessage.event(DrcUpMethod.DELAY_INFO_PUSH.methodName(), buildDelayInfo()));
 
         // osd_info_push：高频 osd 信息上报
-        mqtt.publishJson(drcUpTopic, DrcMessage.event("osd_info_push", buildOsdInfo()));
+        mqtt.publishJson(drcUpTopic, DrcMessage.event(DrcUpMethod.OSD_INFO_PUSH.methodName(), buildOsdInfo()));
 
         // Phase 4: PSDK + AI 事件推送（Dock3 专属）
         publishPsdkAndAiEvents(drcUpTopic);
@@ -294,7 +269,7 @@ public class DeviceSimulator {
         Map<String, Object> floatWindow = new LinkedHashMap<>();
         floatWindow.put("psdk_index", 0);
         floatWindow.put("floating_window_text", "");
-        mqtt.publishJson(drcUpTopic, DrcMessage.event("drc_psdk_floating_window_text", floatWindow));
+        mqtt.publishJson(drcUpTopic, DrcMessage.event(DrcUpMethod.DRC_PSDK_FLOATING_WINDOW_TEXT.methodName(), floatWindow));
 
         // drc_psdk_state_info：探照灯状态上报
         Map<String, Object> lightState = new LinkedHashMap<>();
@@ -314,7 +289,7 @@ public class DeviceSimulator {
         light.put("wide_field_mode", false);
         light.put("light_gimbal_control", false);
         lightState.put("light", light);
-        mqtt.publishJson(drcUpTopic, DrcMessage.event("drc_psdk_state_info", lightState));
+        mqtt.publishJson(drcUpTopic, DrcMessage.event(DrcUpMethod.DRC_PSDK_STATE_INFO.methodName(), lightState));
 
         // drc_psdk_state_info：喊话器状态上报
         Map<String, Object> speakerState = new LinkedHashMap<>();
@@ -336,7 +311,7 @@ public class DeviceSimulator {
         speaker.put("tts_language", 0);  // 0=中文
         speaker.put("tts_speed", 50);
         speakerState.put("speaker", speaker);
-        mqtt.publishJson(drcUpTopic, DrcMessage.event("drc_psdk_state_info", speakerState));
+        mqtt.publishJson(drcUpTopic, DrcMessage.event(DrcUpMethod.DRC_PSDK_STATE_INFO.methodName(), speakerState));
 
         // drc_speaker_play_progress：喊话器播放进度（仅在播放中时推送）
         if (state.isSpeakerPlaying()) {
@@ -349,7 +324,7 @@ public class DeviceSimulator {
             progress.put("percent", 100);
             playProgress.put("progress", progress);
             playProgress.put("md5", "");
-            mqtt.publishJson(drcUpTopic, DrcMessage.event("drc_speaker_play_progress", playProgress));
+            mqtt.publishJson(drcUpTopic, DrcMessage.event(DrcUpMethod.DRC_SPEAKER_PLAY_PROGRESS.methodName(), playProgress));
         }
 
         // drc_psdk_ui_resource：PSDK UI 资源包
@@ -357,7 +332,7 @@ public class DeviceSimulator {
         uiResource.put("psdk_index", 0);
         uiResource.put("psdk_ready", 1);
         uiResource.put("object_key", "psdk_config/0/ui_resource.tar.gz");
-        mqtt.publishJson(drcUpTopic, DrcMessage.event("drc_psdk_ui_resource", uiResource));
+        mqtt.publishJson(drcUpTopic, DrcMessage.event(DrcUpMethod.DRC_PSDK_UI_RESOURCE.methodName(), uiResource));
 
         // drc_ai_info_push：AI 状态上报
         Map<String, Object> aiInfo = new LinkedHashMap<>();
@@ -393,7 +368,7 @@ public class DeviceSimulator {
         labels.add(label2);
         selectedModel.put("labels", labels);
         aiInfo.put("selected_ai_model", selectedModel);
-        mqtt.publishJson(drcUpTopic, DrcMessage.event("drc_ai_info_push", aiInfo));
+        mqtt.publishJson(drcUpTopic, DrcMessage.event(DrcUpMethod.DRC_AI_INFO_PUSH.methodName(), aiInfo));
     }
 
     /**

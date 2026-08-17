@@ -17,11 +17,21 @@ package ltd.cdmi.hivemind.simulator.handler;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.annotation.PostConstruct;
+import ltd.cdmi.dji.cloudapi.sdk.codec.MessageCodec;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.live.LiveCameraChangeRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.live.LiveLensChangeRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.live.LiveSetQualityRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.live.LiveStartPushRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.live.LiveStopPushRequest;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.DrcMethod;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.ServiceMethod;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.device.DeviceMode;
-import ltd.cdmi.hivemind.simulator.device.DeviceType;
+import ltd.cdmi.dji.cloudapi.sdk.model.DockModel;
+import ltd.cdmi.dji.cloudapi.sdk.model.RcModel;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticCode;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticLogRecorder;
+import ltd.cdmi.hivemind.simulator.media.FfmpegWhipPusher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -40,8 +50,9 @@ import java.util.concurrent.CopyOnWriteArrayList;
  * <ul>
  *   <li><b>通用 Service 指令</b>（Pilot + Dock）：live_start_push / live_stop_push / live_set_quality，
  *       通过 Service Topic 接收，services_reply 回复，协议一致</li>
- *   <li><b>镜头切换差异</b>：Dock 通过 Service Topic 收 live_lens_change（video_type=normal/zoom/wide/ir），
- *       Pilot 通过 DRC Topic 收 drc_live_lens_change（payload_index + video_type=thermal/wide/zoom）</li>
+ *   <li><b>镜头切换差异</b>：Dock 通过 Service Topic 收 live_lens_change（video_type=normal/zoom/wide/ir，全局更新），
+ *       其他 Pilot 机型（RC Plus/RC Pro）通过 Service Topic 收 live_lens_change（video_id + video_type=ir/normal/wide/zoom，按 video_id 精准切换），
+ *       RC Plus 2 通过 DRC Topic 收 drc_live_lens_change（payload_index + video_type=thermal/wide/zoom，无 normal）</li>
  *   <li><b>相机切换</b>：仅 Dock2/Dock3 通过 Service Topic 收 live_camera_change，Pilot 无此指令</li>
  * </ul>
  * <p>三 Dock 差异：
@@ -64,7 +75,7 @@ public class LiveStreamSimulator {
 
     /** camera_position 默认值：0=舱内（DJI 枚举 0=舱内,1=舱外） */
     private static final int DEFAULT_CAMERA_POSITION = 0;
-    /** video_type 默认值：normal（Dock 枚举 normal/zoom/wide/ir；Pilot 枚举 thermal/wide/zoom） */
+    /** video_type 默认值：normal（Dock/RC Plus 枚举 ir/normal/wide/zoom；RC Plus 2 枚举 thermal/wide/zoom，无 normal） */
     private static final String DEFAULT_VIDEO_TYPE = "normal";
 
     private final ServiceCommandHandler commandHandler;
@@ -94,7 +105,7 @@ public class LiveStreamSimulator {
         commandHandler.setLiveHandler(this::handle);
         // Pilot 模式：镜头切换走 DRC Topic（drc_live_lens_change），不通过 Service Topic
         if (runtimeConfig.getDeviceMode() == DeviceMode.PILOT) {
-            drcCommandHandler.registerHandler("drc_live_lens_change", this::handleDrcLensChange);
+            drcCommandHandler.registerHandler(DrcMethod.DRC_LIVE_LENS_CHANGE.methodName(), this::handleDrcLensChange);
             log.info("Pilot 模式: 已注册 drc_live_lens_change 到 DRC 通道");
         }
         log.info("LiveStreamSimulator 已注册直播命令处理器，真实推流可用: {}", ffmpegPusher.isRealPushAvailable());
@@ -102,9 +113,9 @@ public class LiveStreamSimulator {
 
     /**
      * 统一路由直播指令（由 ServiceCommandHandler 调用，Service Topic 下行）。
-     * <p>Pilot 模式下，live_lens_change 和 live_camera_change 不通过 Service Topic 接收：
+     * <p>Pilot 模式下，RC Plus 2 的镜头切换走 DRC Topic，其他 Pilot 机型走 Service Topic：
      * <ul>
-     *   <li>live_lens_change → Pilot 走 DRC Topic（drc_live_lens_change），Service Topic 收到时容错返回 result=0</li>
+     *   <li>live_lens_change → RC Plus 2 走 DRC Topic（drc_live_lens_change），Service Topic 收到时容错返回 result=0；其他 Pilot 机型走 Service Topic（含 video_id，按 video_id 精准切换）</li>
      *   <li>live_camera_change → Pilot 无此指令，Service Topic 收到时容错返回 result=0</li>
      * </ul>
      * @param method 指令方法名
@@ -114,26 +125,35 @@ public class LiveStreamSimulator {
     public Map<String, Object> handle(String method, JsonNode data) {
         log.info("处理直播命令: method={}", method);
 
-        // Pilot 模式下，live_lens_change 和 live_camera_change 不应通过 Service Topic 接收
+        // Pilot 模式下，RC Plus 2 的 live_lens_change 走 DRC Topic，其他 Pilot 机型走 Service Topic
         if (runtimeConfig.getDeviceMode() == DeviceMode.PILOT) {
-            if ("live_lens_change".equals(method)) {
-                log.warn("Pilot 模式: live_lens_change 应走 DRC Topic（drc_live_lens_change），Service Topic 收到时容错返回 result=0");
+            if (ServiceMethod.LIVE_LENS_CHANGE.methodName().equals(method) && runtimeConfig.getControllerType() == RcModel.RC_PLUS_2) {
+                log.warn("RC Plus 2: live_lens_change 应走 DRC Topic（drc_live_lens_change），Service Topic 收到时容错返回 result=0");
                 return Map.of("result", 0);
             }
-            if ("live_camera_change".equals(method)) {
+            if (ServiceMethod.LIVE_CAMERA_CHANGE.methodName().equals(method)) {
                 log.warn("Pilot 模式无 live_camera_change 指令，容错返回 result=0");
                 return Map.of("result", 0);
             }
         }
 
-        return switch (method) {
-            case "live_start_push" -> handleStartPush(data);
-            case "live_stop_push" -> handleStopPush(data);
-            case "live_set_quality" -> handleSetQuality(data);
-            case "live_camera_change" -> handleCameraChange(data);
-            case "live_lens_change" -> handleLensChange(data);
-            default -> Map.of("result", 0);
-        };
+        // switch case 标签要求编译时常量，ServiceMethod 枚举的 methodName() 为运行时调用，改用 if-else 链
+        if (ServiceMethod.LIVE_START_PUSH.methodName().equals(method)) {
+            return handleStartPush(data);
+        }
+        if (ServiceMethod.LIVE_STOP_PUSH.methodName().equals(method)) {
+            return handleStopPush(data);
+        }
+        if (ServiceMethod.LIVE_SET_QUALITY.methodName().equals(method)) {
+            return handleSetQuality(data);
+        }
+        if (ServiceMethod.LIVE_CAMERA_CHANGE.methodName().equals(method)) {
+            return handleCameraChange(data);
+        }
+        if (ServiceMethod.LIVE_LENS_CHANGE.methodName().equals(method)) {
+            return handleLensChange(data);
+        }
+        return Map.of("result", 0);
     }
 
     /**
@@ -142,18 +162,19 @@ public class LiveStreamSimulator {
      * <p>若 url_type=1 (RTMP) 或 url_type=4 (WebRTC) 且 ffmpeg 支持对应协议，启动真实推流进程；否则仅协议模拟。</p>
      */
     private Map<String, Object> handleStartPush(JsonNode data) {
-        if (data == null) {
+        if (data == null || data.isMissingNode()) {
             return Map.of("result", 1);
         }
-        String videoId = data.path("video_id").asText();
-        String url = data.path("url").asText();
-        int urlType = data.path("url_type").asInt();
-        int quality = data.path("video_quality").asInt();
+        var req = MessageCodec.fromJson(data.toString(), LiveStartPushRequest.class);
+        String videoId = req.videoId();
+        String url = req.url();
+        int urlType = req.urlType();
+        int quality = req.videoQuality();
 
         // 幂等：先移除已存在的同 videoId 记录，再添加，保证 video_id 唯一
         // 新推流默认 camera_position=0（舱内）
         activeStreams.removeIf(s -> s.videoId().equals(videoId));
-        LiveStream stream = new LiveStream(videoId, url, urlType, quality, DEFAULT_CAMERA_POSITION);
+        LiveStream stream = new LiveStream(videoId, url, urlType, quality, DEFAULT_CAMERA_POSITION, videoType);
         activeStreams.add(stream);
         log.info("直播推流已启动: videoId={}, urlType={}, quality={}", videoId, urlType, quality);
 
@@ -177,7 +198,7 @@ public class LiveStreamSimulator {
                 && urlType != FfmpegWhipPusher.URL_TYPE_WEBRTC) {
             if (url != null && url.toLowerCase().startsWith("rtmp://")) {
                 log.info("url_type={} 与 URL 协议(rtmp://)不匹配，自动按 RTMP 推流: videoId={}", urlType, videoId);
-                diagnosticRecorder.record(DiagnosticCode.MONITOR_SIMULATOR_INFERENCE, "live_start_push",
+                diagnosticRecorder.record(DiagnosticCode.MONITOR_SIMULATOR_INFERENCE, ServiceMethod.LIVE_START_PUSH.methodName(),
                         "url_type=" + urlType + " 与 URL 协议(rtmp://)不匹配，自动按 RTMP 推流。"
                         + "待真机验证：真机收到不匹配的 url_type 时是否也会容错处理。");
                 urlType = FfmpegWhipPusher.URL_TYPE_RTMP;
@@ -201,7 +222,7 @@ public class LiveStreamSimulator {
                 String rtmpUrl = convertWhipToRtmp(url);
                 if (rtmpUrl != null) {
                     log.info("ffmpeg 不支持 WHIP，自动降级为 RTMP 推流: videoId={}, rtmpUrl={}", videoId, rtmpUrl);
-                    diagnosticRecorder.record(DiagnosticCode.MONITOR_SIMULATOR_INFERENCE, "live_start_push",
+                    diagnosticRecorder.record(DiagnosticCode.MONITOR_SIMULATOR_INFERENCE, ServiceMethod.LIVE_START_PUSH.methodName(),
                             "ffmpeg 不支持 WHIP，自动降级为 RTMP 推流。originalUrl=" + url + ", rtmpUrl=" + rtmpUrl
                             + "。待真机验证：真机不支持 WHIP 时是否也会降级为 RTMP，或直接报错。");
                     actualUrlType = FfmpegWhipPusher.URL_TYPE_RTMP;
@@ -313,7 +334,7 @@ public class LiveStreamSimulator {
             return defaultFile;
         }
         log.warn("视频文件不存在: {} 和 {}，将降级为协议模拟", primaryFile, defaultFile);
-        diagnosticRecorder.record(DiagnosticCode.SIMULATOR_FFMPEG_WHIP_NOT_SUPPORTED, "live_start_push",
+        diagnosticRecorder.record(DiagnosticCode.SIMULATOR_FFMPEG_WHIP_NOT_SUPPORTED, ServiceMethod.LIVE_START_PUSH.methodName(),
                 "视频文件不存在: " + primaryFile + " 和 default.mp4");
         return "";
     }
@@ -322,8 +343,9 @@ public class LiveStreamSimulator {
      * 停止推流：移除推流记录并停止 ffmpeg 进程，回 result=0。
      */
     private Map<String, Object> handleStopPush(JsonNode data) {
-        if (data != null) {
-            String videoId = data.path("video_id").asText();
+        if (data != null && !data.isMissingNode()) {
+            var req = MessageCodec.fromJson(data.toString(), LiveStopPushRequest.class);
+            String videoId = req.videoId();
             activeStreams.removeIf(s -> s.videoId().equals(videoId));
             ffmpegPusher.stopPush(videoId);
             log.info("直播推流已停止: videoId={}", videoId);
@@ -336,15 +358,16 @@ public class LiveStreamSimulator {
      * <p>注：ffmpeg 推流进程不动态调整码率（标记 TODO，需重启进程实现）。</p>
      */
     private Map<String, Object> handleSetQuality(JsonNode data) {
-        if (data != null) {
-            String videoId = data.path("video_id").asText();
-            int quality = data.path("video_quality").asInt();
+        if (data != null && !data.isMissingNode()) {
+            var req = MessageCodec.fromJson(data.toString(), LiveSetQualityRequest.class);
+            String videoId = req.videoId();
+            int quality = req.videoQuality();
             // 使用索引遍历，避免 CopyOnWriteArrayList 在并发修改时 indexOf 返回 -1 导致 IOOBE
             for (int i = 0; i < activeStreams.size(); i++) {
                 LiveStream stream = activeStreams.get(i);
                 if (stream.videoId().equals(videoId)) {
                     activeStreams.set(i, new LiveStream(
-                            videoId, stream.url(), stream.urlType(), quality, stream.cameraPosition()));
+                            videoId, stream.url(), stream.urlType(), quality, stream.cameraPosition(), stream.videoType()));
                     break;
                 }
             }
@@ -360,21 +383,22 @@ public class LiveStreamSimulator {
      * <p>核实依据：[Dock1 live.html] 无 live_camera_change 指令；[Dock2/Dock3 live.html] 均有该指令。</p>
      */
     private Map<String, Object> handleCameraChange(JsonNode data) {
-        DeviceType dockType = runtimeConfig.getDockType();
-        if (dockType == DeviceType.DOCK1) {
+        DockModel dockType = runtimeConfig.getDockType();
+        if (dockType == DockModel.DOCK1) {
             log.warn("Dock1 不支持 live_camera_change 指令，返回占位 result=0（不更新状态）");
             return Map.of("result", 0);
         }
-        if (data == null) {
+        if (data == null || data.isMissingNode()) {
             return Map.of("result", 0);
         }
-        String videoId = data.path("video_id").asText();
-        int cameraPosition = data.path("camera_position").asInt();
+        var req = MessageCodec.fromJson(data.toString(), LiveCameraChangeRequest.class);
+        String videoId = req.videoId();
+        int cameraPosition = req.cameraPosition();
         for (int i = 0; i < activeStreams.size(); i++) {
             LiveStream stream = activeStreams.get(i);
             if (stream.videoId().equals(videoId)) {
                 activeStreams.set(i, new LiveStream(
-                        videoId, stream.url(), stream.urlType(), stream.quality(), cameraPosition));
+                        videoId, stream.url(), stream.urlType(), stream.quality(), cameraPosition, stream.videoType()));
                 log.info("直播相机已切换: videoId={}, cameraPosition={}", videoId, cameraPosition);
                 break;
             }
@@ -383,16 +407,35 @@ public class LiveStreamSimulator {
     }
 
     /**
-     * 切换直播镜头（Dock，Service Topic）：解析 video_type 全局更新，回 result=0。
-     * <p>DJI 枚举：video_type ∈ normal/zoom/wide/ir。无 video_id，对所有推流生效。</p>
-     * <p>核实依据：三 Dock live.html 均有 live_lens_change 指令，Data 仅含 video_type。</p>
+     * 切换直播镜头（Service Topic）：解析 video_type（+ video_id），按 video_id 精准切换；无 video_id 时全局更新。
+     * <p>Dock 模式：video_type ∈ ir/normal/wide/zoom，无 video_id，全局更新。</p>
+     * <p>RC Plus/RC Pro：video_type ∈ normal/thermal/wide/zoom，含 video_id，按 video_id 精准切换。</p>
+     * <p>RC Plus 2：走 DRC Topic {@code drc_live_lens_change}（payload_index + video_type），由 {@link #handleDrcLensChange} 处理。</p>
+     * <p>核实依据：[Dock3 live.html] Data 仅含 video_type；[RC Plus/RC Pro live.md] Data 含 video_id + video_type；[RC Plus 2 live.html] drc_live_lens_change Data 含 payload_index + video_type。</p>
      */
     private Map<String, Object> handleLensChange(JsonNode data) {
-        if (data != null) {
-            String newVideoType = data.path("video_type").asText();
-            if (!newVideoType.isEmpty()) {
-                this.videoType = newVideoType;
-                log.info("直播镜头已切换: videoType={}", newVideoType);
+        if (data != null && !data.isMissingNode()) {
+            var req = MessageCodec.fromJson(data.toString(), LiveLensChangeRequest.class);
+            String newVideoType = req.videoType();
+            if (newVideoType != null && !newVideoType.isEmpty()) {
+                String videoId = req.videoId() != null ? req.videoId() : "";
+                if (!videoId.isEmpty()) {
+                    // RC Plus/RC Pro：按 video_id 精准切换
+                    for (int i = 0; i < activeStreams.size(); i++) {
+                        LiveStream stream = activeStreams.get(i);
+                        if (stream.videoId().equals(videoId)) {
+                            activeStreams.set(i, new LiveStream(
+                                    videoId, stream.url(), stream.urlType(), stream.quality(),
+                                    stream.cameraPosition(), newVideoType));
+                            break;
+                        }
+                    }
+                    log.info("直播镜头已切换: videoId={}, videoType={}", videoId, newVideoType);
+                } else {
+                    // Dock 模式：无 video_id，全局更新
+                    this.videoType = newVideoType;
+                    log.info("直播镜头已切换（全局）: videoType={}", newVideoType);
+                }
                 // TODO: 若需真实推流反映镜头切换，需重启 ffmpeg 进程使用新视频文件
             }
         }
@@ -400,9 +443,9 @@ public class LiveStreamSimulator {
     }
 
     /**
-     * 切换直播镜头（Pilot，DRC Topic）：解析 payload_index + video_type 全局更新，回 result=0。
-     * <p>DJI 枚举：video_type ∈ thermal/wide/zoom。含 payload_index（相机枚举值，格式 {type-subtype-gimbalindex}）。</p>
-     * <p>核实依据：[DJI Pilot live.html] drc_live_lens_change 走 DRC Topic（drc/down → drc/up），Data 含 payload_index + video_type。</p>
+     * 切换直播镜头（RC Plus 2，DRC Topic）：解析 payload_index + video_type 全局更新，回 result=0。
+     * <p>DJI 枚举：video_type ∈ thermal/wide/zoom（无 normal）。含 payload_index（相机枚举值，格式 {type-subtype-gimbalindex}）。</p>
+     * <p>核实依据：[RC Plus 2 live.html] drc_live_lens_change 走 DRC Topic（drc/down → drc/up），Data 含 payload_index + video_type。</p>
      * @param data DRC 指令 data，含 payload_index 和 video_type
      * @return DRC 回复 data（{result: 0}）
      */
@@ -420,7 +463,7 @@ public class LiveStreamSimulator {
 
     /**
      * 获取当前活跃推流列表（供 Web 控制台使用）。
-     * <p>每条记录包含 video_id/url/url_type/quality/camera_position；全局 video_type 单独通过 {@link #getVideoType()} 获取。</p>
+     * <p>每条记录包含 video_id/url/url_type/quality/camera_position/video_type；全局 video_type（Dock 模式无 video_id 时）通过 {@link #getVideoType()} 获取。</p>
      */
     public List<Map<String, Object>> getActiveStreams() {
         List<Map<String, Object>> result = new java.util.ArrayList<>();
@@ -431,6 +474,7 @@ public class LiveStreamSimulator {
             m.put("url_type", s.urlType());
             m.put("quality", s.quality());
             m.put("camera_position", s.cameraPosition());
+            m.put("video_type", s.videoType());
             result.add(m);
         }
         return result;
@@ -442,5 +486,5 @@ public class LiveStreamSimulator {
     }
 
     /** 直播流记录 */
-    private record LiveStream(String videoId, String url, int urlType, int quality, int cameraPosition) {}
+    private record LiveStream(String videoId, String url, int urlType, int quality, int cameraPosition, String videoType) {}
 }

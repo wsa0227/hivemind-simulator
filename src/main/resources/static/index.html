@@ -330,6 +330,14 @@
             white-space: nowrap;
         }
 
+        /* Dock 面板 Tab 分组 */
+        .dock-tabs .el-tabs__header { margin-bottom: 12px; }
+        .dock-tabs .el-tabs__nav-wrap { padding: 0 4px; }
+        .dock-tabs .el-tabs__item { font-size: 13px; font-weight: 500; }
+        .dock-tabs .el-tab-pane { padding-bottom: 4px; }
+        .dock-tabs .right-card { margin-bottom: 12px; }
+        .dock-tabs .right-card:last-child { margin-bottom: 0; }
+
         /* ===== MQTT 消息详情抽屉 ===== */
         .msg-detail-drawer .el-drawer__body {
             display: flex;
@@ -512,8 +520,13 @@
                     </el-select>
                 </el-form-item>
                 <el-form-item label="飞行器类型">
-                    <el-select v-model="connConfig.drone_type" placeholder="选择飞行器类型" style="width: 100%;">
+                    <el-select v-model="connConfig.drone_type" @change="onDroneTypeChange" placeholder="选择飞行器类型" style="width: 100%;">
                         <el-option v-for="o in pilotDroneTypeOptions" :key="o.value" :label="o.label" :value="o.value"></el-option>
+                    </el-select>
+                </el-form-item>
+                <el-form-item label="相机负载" v-if="payloadOptions.length > 0">
+                    <el-select v-model="connConfig.selected_payload" placeholder="选择挂载负载" style="width: 100%;">
+                        <el-option v-for="o in payloadOptions" :key="o.value" :label="o.label" :value="o.value"></el-option>
                     </el-select>
                 </el-form-item>
             </template>
@@ -551,6 +564,9 @@
                 <el-input v-model="connConfig.mqtt_password" type="password" show-password placeholder="留空则不修改"></el-input>
             </el-form-item>
         </el-form>
+        <div v-if="connecting" style="margin: 8px 0; padding: 8px 12px; background: #f0f9ff; border-radius: 4px; color: #475569; font-size: 13px; line-height: 1.6;">
+            正在注册到第三方平台...（流程：config → 绑定状态 → 组织查询 → 设备绑定 → 上线，预计 10-40 秒）
+        </div>
         <template #footer>
             <el-button @click="showRegisterDialog = false">取消</el-button>
             <el-button type="primary" @click="doRegister" :loading="connecting">确认注册</el-button>
@@ -565,12 +581,14 @@
                 <el-descriptions-item label="Drone SN">{{ deviceInfo.droneSn || '-' }}</el-descriptions-item>
                 <el-descriptions-item label="遥控器型号">{{ deviceInfo.controllerModelKey ? controllerModelName(deviceInfo.controllerModelKey) + ' (' + deviceInfo.controllerModelKey + ')' : '-' }}</el-descriptions-item>
                 <el-descriptions-item label="无人机型号">{{ deviceInfo.droneModelKey ? droneModelName(deviceInfo.droneModelKey) + ' (' + deviceInfo.droneModelKey + ')' : '-' }}</el-descriptions-item>
+                <el-descriptions-item label="物模型版本">{{ deviceInfo.thingVersion || '-' }}</el-descriptions-item>
             </template>
             <template v-else>
                 <el-descriptions-item label="Dock SN">{{ deviceInfo.dockSn || '-' }}</el-descriptions-item>
                 <el-descriptions-item label="Drone SN">{{ deviceInfo.droneSn || '-' }}</el-descriptions-item>
                 <el-descriptions-item label="机场型号">{{ deviceInfo.dockModelKey ? dockModelName(deviceInfo.dockModelKey) + ' (' + deviceInfo.dockModelKey + ')' : '-' }}</el-descriptions-item>
                 <el-descriptions-item label="无人机型号">{{ deviceInfo.droneModelKey ? droneModelName(deviceInfo.droneModelKey) + ' (' + deviceInfo.droneModelKey + ')' : '-' }}</el-descriptions-item>
+                <el-descriptions-item label="物模型版本">{{ deviceInfo.thingVersion || '-' }}</el-descriptions-item>
             </template>
         </el-descriptions>
     </el-dialog>
@@ -815,6 +833,11 @@
 <script src="/vendor/element-plus/index.full.min.js"></script>
 <script src="/panels/dock-panel.js"></script>
 <script src="/panels/pilot-panel.js"></script>
+<script src="/panels/pilot-status.js"></script>
+<script src="/panels/pilot-live.js"></script>
+<script src="/panels/pilot-cloud.js"></script>
+<script src="/panels/pilot-config.js"></script>
+<script src="/panels/pilot-jsbridge-tabs.js"></script>
 <script>
 const { createApp, ref, reactive, computed, onMounted, onUnmounted, nextTick, watch, provide, inject } = Vue;
 
@@ -900,6 +923,7 @@ const app = createApp({
             dock_type: '',
             drone_type: '',
             controller_type: '',  // Pilot 模式遥控器类型
+            selected_payload: '',  // Pilot 模式相机选择（M350/M300 通用云台）
             mqtt_address: '',
             mqtt_username: '',
             mqtt_password: '',
@@ -911,7 +935,7 @@ const app = createApp({
             { value: 'DOCK2', label: 'Dock2' },
             { value: 'DOCK3', label: 'Dock3' },
         ];
-        // 机场 → 兼容飞行器 映射（与后端 DeviceType.isCompatible 一致）
+        // 机场 → 兼容飞行器 映射（与后端 DockModel/DroneModel 兼容性一致）
         const droneTypeOptionsMap = {
             DOCK1: [{ value: 'M30',  label: 'M30'  }, { value: 'M30T', label: 'M30T' }],
             DOCK2: [{ value: 'M3D',  label: 'M3D'  }, { value: 'M3TD', label: 'M3TD' }],
@@ -933,15 +957,46 @@ const app = createApp({
             { value: 'RC_PLUS',   label: 'DJI RC Plus'      },
             { value: 'RC_PLUS_2', label: 'DJI RC Plus 2'    },
             { value: 'RC_PRO',    label: 'RC Pro 行业版'     },
+            { value: 'SMART_CONTROLLER_ENTERPRISE', label: 'DJI 带屏遥控器行业版' },
         ];
-        // 遥控器 → 兼容飞行器 映射（与后端 DeviceType.isCompatiblePilot 一致）
+        // 遥控器 → 兼容飞行器 映射（基于 DJI 产品支持文档，后端不校验搭配，仅前端联动选项）
         const pilotDroneTypeOptionsMap = {
             RC_PLUS:   [{ value: 'M350_RTK', label: 'M350 RTK' }, { value: 'M300_RTK', label: 'M300 RTK' }, { value: 'M30',  label: 'M30'  }, { value: 'M30T', label: 'M30T' }],
-            RC_PLUS_2: [{ value: 'M4E',      label: 'DJI M4E'   }, { value: 'M4T',      label: 'DJI M4T'   }],
+            RC_PLUS_2: [{ value: 'M400',     label: 'Matrice 400' }, { value: 'M4E',      label: 'DJI M4E'   }, { value: 'M4T',      label: 'DJI M4T'   }],
             RC_PRO:    [{ value: 'MAVIC_3E', label: 'Mavic 3E'  }, { value: 'MAVIC_3T', label: 'Mavic 3T' }],
+            SMART_CONTROLLER_ENTERPRISE: [{ value: 'M300_RTK', label: 'M300 RTK' }],
         };
         // 当前遥控器类型下的飞行器选项（联动）
         const pilotDroneTypeOptions = computed(() => pilotDroneTypeOptionsMap[connConfig.controller_type] || []);
+
+        // Pilot 模式飞行器 → 可选负载 映射（M350/M300 可挂载通用云台）
+        const payloadOptionsMap = {
+            M350_RTK: [
+                { value: 'H20',  label: 'H20'  },
+                { value: 'H20T', label: 'H20T' },
+                { value: 'H20N', label: 'H20N' },
+                { value: 'H30',  label: 'H30'  },
+                { value: 'H30T', label: 'H30T' },
+            ],
+            M300_RTK: [
+                { value: 'H20',  label: 'H20'  },
+                { value: 'H20T', label: 'H20T' },
+                { value: 'H20N', label: 'H20N' },
+                { value: 'H30',  label: 'H30'  },
+                { value: 'H30T', label: 'H30T' },
+            ],
+            M400: [
+                { value: 'H30',  label: 'H30'  },
+                { value: 'H30T', label: 'H30T' },
+            ],
+        };
+        // 当前飞行器类型下的可选负载（M350/M300/M400 可挂载通用云台）
+        const payloadOptions = computed(() => payloadOptionsMap[connConfig.drone_type] || []);
+
+        // 飞行器类型切换时，清空负载选择（新机型可能不需要通用云台）
+        function onDroneTypeChange() {
+            connConfig.selected_payload = '';
+        }
 
         // 遥控器类型切换时，若当前飞行器不兼容则自动切换到该遥控器的首个兼容飞行器
         function onControllerTypeChange() {
@@ -949,6 +1004,7 @@ const app = createApp({
             if (!compatible.some(o => o.value === connConfig.drone_type)) {
                 connConfig.drone_type = compatible.length ? compatible[0].value : '';
             }
+            connConfig.selected_payload = '';  // 切换遥控器时清空负载选择
         }
 
         // 接入模式切换时，初始化对应模式的默认设备类型
@@ -1006,6 +1062,13 @@ const app = createApp({
             'P-3': '第三方平台凭证有误',
             'P-4': 'DJI License 校验失败，请检查 License 配置',
         };
+
+        // 格式化注册失败提示：code 在 errorCodeMap 中返回映射文案，否则附带 code 便于定位
+        // step 标识失败步骤（后端 OnlineResult.step），附加到提示前让用户精准定位失败环节（TC-REG-019）
+        function formatRegisterError(code, step) {
+            const msg = errorCodeMap[code] || ('注册失败（错误码: ' + code + '）');
+            return step ? step + '失败：' + msg : msg;
+        }
 
         // localStorage 持久化
         function saveConnConfig() {
@@ -1359,17 +1422,15 @@ const app = createApp({
                 host = addr;
             }
             // License 处理：已锁定时使用锁定的 license（界面已隐藏输入行），
-            // 未锁定时为首次注册，使用用户输入的值并锁定到 localStorage
+            // 未锁定时为首次注册，使用用户输入的值
             // 模拟真实机场 license 首次注册后不可更改的行为
-            // 桌面应用中 localStorage 无法手动清除，输入错误只能重装应用
+            // 注意：license 锁定延迟到注册成功后执行（见下方 onlineData.success 分支），
+            // 避免注册失败也锁定错误值——桌面应用无法清除 localStorage，输入错误会彻底卡死（TC-REG-007）
             let licenseToUse = connConfig.app_license;
             if (!silent) {
                 const lockedLicense = localStorage.getItem('locked_app_license');
                 if (lockedLicense) {
                     licenseToUse = lockedLicense;
-                } else if (licenseToUse) {
-                    localStorage.setItem('locked_app_license', licenseToUse);
-                    licenseLocked.value = true;
                 }
             }
             // 用户主动注册到第三方平台时，清空旧平台的通讯指令日志，避免不同平台指令混淆
@@ -1388,6 +1449,7 @@ const app = createApp({
                 dock_type: connConfig.dock_type,
                 drone_type: connConfig.drone_type,
                 controller_type: connConfig.controller_type,
+                selected_payload: connConfig.selected_payload,
                 mqtt_host: host,
                 mqtt_port: port,
                 mqtt_username: connConfig.mqtt_username,
@@ -1415,6 +1477,13 @@ const app = createApp({
                     if (onlineData) {
                         online.value = onlineData.online;
                         if (onlineData.success) {
+                            // 注册成功后才锁定 license（模拟真实机场首次注册后不可更改）
+                            // 延迟到此处而非输入即锁定：避免注册失败时锁定错误值，
+                            // 桌面端无法清除 localStorage 会导致用户彻底卡死（TC-REG-007）
+                            if (!silent && licenseToUse) {
+                                localStorage.setItem('locked_app_license', licenseToUse);
+                                licenseLocked.value = true;
+                            }
                             // 注册+上线成功，保存配置（含密码），便于下次自动填充
                             saveConnConfig();
                             mqttError.value = false;
@@ -1426,9 +1495,12 @@ const app = createApp({
                             return true;
                         } else {
                             // 注册失败（config 超时、绑定码错误、license 不匹配等）
+                            // 断开 MQTT 连接（注册失败不应保持连接；保留诊断日志供用户查看失败详情，TC-REG-024）
+                            const disconnectData = await fetch('/api/disconnect', { method: 'POST' }).then(r => r.json());
+                            mqttConnected.value = disconnectData.mqtt_connected;
                             localStorage.setItem('registered', 'false');
                             mqttError.value = true;
-                            ElementPlus.ElMessage.error(errorCodeMap[onlineData.code] || '注册失败');
+                            ElementPlus.ElMessage.error(formatRegisterError(onlineData.code, onlineData.step));
                             return false;
                         }
                     }
@@ -1438,7 +1510,7 @@ const app = createApp({
                     connecting.value = false;
                     localStorage.setItem('registered', 'false');
                     mqttError.value = true;
-                    ElementPlus.ElMessage.error(errorCodeMap[data.code] || '注册失败');
+                    ElementPlus.ElMessage.error(formatRegisterError(data.code));
                     return false;
                 }
             }
@@ -1528,6 +1600,10 @@ const app = createApp({
         // 开机：如果上次注册成功，自动用保存的配置连接 MQTT + 注册 + 上线
         async function doPowerOn() {
             if (powered.value) return;
+            // 显式重置状态（避免上次关机失败残留错误状态）
+            mqttConnected.value = false;
+            online.value = false;
+            mqttError.value = false;
             powered.value = true;
 
             // 检查上次是否注册成功
@@ -1538,18 +1614,20 @@ const app = createApp({
             await registerToPlatform(true);
         }
 
-        // 关机：下线 + 断开 MQTT
+        // 关机：下线 + 断开 MQTT + 清空日志（后端 offline 已清空诊断日志与 MQTT 消息日志，前端配合清空历史状态）
         async function doPowerOff() {
             if (!powered.value) return;
-            const data = await fetchJSON('/api/offline', { method: 'POST' });
-            if (data) {
-                online.value = data.online;
-                mqttConnected.value = data.mqtt_connected;
-            }
+            await fetchJSON('/api/offline', { method: 'POST' });
+            // 无论后端是否成功，前端都重置为关机状态（避免 offline 失败时状态不一致）
+            online.value = false;
+            mqttConnected.value = false;
             powered.value = false;
             mqttError.value = false;
-            // 清空模拟器指令通讯窗口（不影响监控器页面）
+            connecting.value = false;
+            // 清空指令通讯窗口与历史分页状态（避免下次开机翻页加载跨会话消息）
             logs.value = [];
+            historyLogs.value = [];
+            hasMoreHistory.value = true;
         }
 
         async function saveState() {
@@ -2028,8 +2106,8 @@ const app = createApp({
             openMessageDetail, copyPayload,
             // 工具函数和选项
             dockModelName, droneModelName, controllerModelName,
-            dockTypeOptions, droneTypeOptions, controllerTypeOptions, pilotDroneTypeOptions,
-            onDockTypeChange, onControllerTypeChange, onDeviceModeChange,
+            dockTypeOptions, droneTypeOptions, controllerTypeOptions, pilotDroneTypeOptions, payloadOptions,
+            onDockTypeChange, onControllerTypeChange, onDeviceModeChange, onDroneTypeChange,
             droneStatusLabel, canTriggerRcLost, coverageRateText,
         });
 
@@ -2044,7 +2122,7 @@ const app = createApp({
                  loadMoreHistory, onLogScroll,
                  dockModelName, droneModelName, controllerModelName,
                  dockTypeOptions, droneTypeOptions, onDockTypeChange,
-                 controllerTypeOptions, pilotDroneTypeOptions, onControllerTypeChange, onDeviceModeChange,
+                 controllerTypeOptions, pilotDroneTypeOptions, payloadOptions, onControllerTypeChange, onDeviceModeChange, onDroneTypeChange,
                  showDiagnosticDialog, diagnosticLogs, diagnosticFilter, filteredDiagnosticLogs, loadDiagnosticLogs,
                  showCoverageDialog, coverageHosts, coverageSelectedHost, coverageData, coverageRateText,
                  openCoverageDialog, loadCoverageHosts, loadCoverageData, downloadCoverageReport,
@@ -2063,6 +2141,11 @@ app.use(ElementPlus);
 // 注册 Dock/Pilot 面板组件（CDN 方式，无构建链）
 registerDockPanel(app);
 registerPilotPanel(app);
+registerPilotStatusPanel(app);
+registerPilotLivePanel(app);
+registerPilotCloudPanel(app);
+registerPilotConfigPanel(app);
+registerPilotJsbridgeTabsPanel(app);
 app.mount('#app');
 // Vue 挂载完成，移除加载占位
 document.getElementById('app-loading')?.remove();

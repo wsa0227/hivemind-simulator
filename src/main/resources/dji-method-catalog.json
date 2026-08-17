@@ -88,15 +88,16 @@
   },
   "drc_down": {
     "common": [
-      "drc_force_landing",
       "drone_emergency_stop",
-      "drc_emergency_landing",
       "stick_control",
       "drone_control",
       "heart_beat"
     ],
     "dock1": [],
-    "dock2": [],
+    "dock2": [
+      "drc_force_landing",
+      "drc_emergency_landing"
+    ],
     "dock3": [
       "drc_camera_night_mode_set",
       "drc_camera_denoise_level_set",

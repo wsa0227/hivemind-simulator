@@ -19,11 +19,26 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
+import ltd.cdmi.dji.cloudapi.sdk.codec.MessageCodec;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.wayline.FlighttaskExecuteRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.wayline.FlighttaskPrepareRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.wayline.MultiDockTask;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.wayline.FlighttaskStopRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.wayline.FlighttaskUndoRequest;
+import ltd.cdmi.dji.cloudapi.sdk.codec.MessageCodec;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.wayline.InFlightWaylineDeliverRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.wayline.InFlightWaylineRecoverRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.wayline.InFlightWaylineStopRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.wayline.ReturnSpecificHomeRequest;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.envelope.EventEnvelope;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.EventMethod;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.RequestsMethod;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.ServiceMethod;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
 import ltd.cdmi.hivemind.simulator.device.DeviceMode;
 import ltd.cdmi.hivemind.simulator.device.DeviceState;
-import ltd.cdmi.hivemind.simulator.device.DeviceType;
+import ltd.cdmi.dji.cloudapi.sdk.model.DockModel;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticCode;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticLogRecorder;
 import ltd.cdmi.hivemind.simulator.mqtt.DockTopicSchema;
@@ -208,28 +223,54 @@ public class WaylineTaskSimulator {
 
         // Dock 类型归属校验
         if (!isCommandSupported(method)) {
-            log.warn("[P-8] 当前 Dock 类型 {} 不支持命令: {}", runtimeConfig.getDockType().getShortName(), method);
+            log.warn("[P-8] 当前 Dock 类型 {} 不支持命令: {}", runtimeConfig.getDockType().shortName(), method);
             diagnosticRecorder.record(DiagnosticCode.PLATFORM_DOCK_CAPABILITY_MISMATCH, method,
-                    "Dock " + runtimeConfig.getDockType().getShortName() + " 不支持此命令");
+                    "Dock " + runtimeConfig.getDockType().shortName() + " 不支持此命令");
             return Map.of("result", 1);
         }
 
-        return switch (method) {
-            case "flighttask_prepare" -> handlePrepare(data);
-            case "flighttask_execute" -> handleExecute(data);
-            case "flighttask_pause" -> handlePause();
-            case "flighttask_recovery" -> handleRecovery();
-            case "flighttask_undo", "flighttask_stop" -> handleStop(data);
-            case "return_home" -> handleReturnHome();
-            case "return_home_cancel" -> handleReturnHomeCancel();
-            case "return_specific_home" -> handleReturnSpecificHome(data);
-            case "flight_setup_abort" -> handleFlightSetupAbort();
-            case "in_flight_wayline_deliver" -> handleInFlightWaylineDeliver(data);
-            case "in_flight_wayline_stop" -> handleInFlightWaylineStop(data);
-            case "in_flight_wayline_recover" -> handleInFlightWaylineRecover(data);
-            case "in_flight_wayline_cancel" -> handleInFlightWaylineCancel();
-            default -> Map.of("result", 0);
-        };
+        // switch case 标签要求编译时常量，ServiceMethod 枚举的 methodName() 为运行时调用，改用 if-else 链
+        if (ServiceMethod.FLIGHTTASK_PREPARE.methodName().equals(method)) {
+            return handlePrepare(data);
+        }
+        if (ServiceMethod.FLIGHTTASK_EXECUTE.methodName().equals(method)) {
+            return handleExecute(data);
+        }
+        if (ServiceMethod.FLIGHTTASK_PAUSE.methodName().equals(method)) {
+            return handlePause();
+        }
+        if (ServiceMethod.FLIGHTTASK_RECOVERY.methodName().equals(method)) {
+            return handleRecovery();
+        }
+        if (ServiceMethod.FLIGHTTASK_UNDO.methodName().equals(method)
+                || ServiceMethod.FLIGHTTASK_STOP.methodName().equals(method)) {
+            return handleStop(method, data);
+        }
+        if (ServiceMethod.RETURN_HOME.methodName().equals(method)) {
+            return handleReturnHome();
+        }
+        if (ServiceMethod.RETURN_HOME_CANCEL.methodName().equals(method)) {
+            return handleReturnHomeCancel();
+        }
+        if (ServiceMethod.RETURN_SPECIFIC_HOME.methodName().equals(method)) {
+            return handleReturnSpecificHome(data);
+        }
+        if (ServiceMethod.FLIGHT_SETUP_ABORT.methodName().equals(method)) {
+            return handleFlightSetupAbort();
+        }
+        if (ServiceMethod.IN_FLIGHT_WAYLINE_DELIVER.methodName().equals(method)) {
+            return handleInFlightWaylineDeliver(data);
+        }
+        if (ServiceMethod.IN_FLIGHT_WAYLINE_STOP.methodName().equals(method)) {
+            return handleInFlightWaylineStop(data);
+        }
+        if (ServiceMethod.IN_FLIGHT_WAYLINE_RECOVER.methodName().equals(method)) {
+            return handleInFlightWaylineRecover(data);
+        }
+        if (ServiceMethod.IN_FLIGHT_WAYLINE_CANCEL.methodName().equals(method)) {
+            return handleInFlightWaylineCancel();
+        }
+        return Map.of("result", 0);
     }
 
     /**
@@ -244,12 +285,15 @@ public class WaylineTaskSimulator {
      * [Dock3 wayline.html](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock3/wayline.html)
      */
     private boolean isCommandSupported(String method) {
-        DeviceType dockType = runtimeConfig.getDockType();
-        return switch (method) {
-            case "flighttask_stop", "return_specific_home" -> dockType != DeviceType.DOCK1;
-            case "flight_setup_abort" -> dockType == DeviceType.DOCK1;
-            default -> true;
-        };
+        DockModel dockType = runtimeConfig.getDockType();
+        if (ServiceMethod.FLIGHTTASK_STOP.methodName().equals(method)
+                || ServiceMethod.RETURN_SPECIFIC_HOME.methodName().equals(method)) {
+            return dockType != DockModel.DOCK1;
+        }
+        if (ServiceMethod.FLIGHT_SETUP_ABORT.methodName().equals(method)) {
+            return dockType == DockModel.DOCK1;
+        }
+        return true;
     }
 
     /**
@@ -258,7 +302,7 @@ public class WaylineTaskSimulator {
      * 必须按型号选择，否则 step 值语义错误（如 Dock1 的 24=返航检查，在 Dock3 下 24=触发执行航线）。</p>
      */
     private int[] stepSequence() {
-        return runtimeConfig.getDockType() == DeviceType.DOCK1 ? STEP_SEQUENCE_DOCK1 : STEP_SEQUENCE_DOCK2_3;
+        return runtimeConfig.getDockType() == DockModel.DOCK1 ? STEP_SEQUENCE_DOCK1 : STEP_SEQUENCE_DOCK2_3;
     }
 
     /**
@@ -272,18 +316,18 @@ public class WaylineTaskSimulator {
      * <p>核实依据：[Dock1/Dock2/Dock3 wayline.html] break_reason 枚举对比</p>
      */
     private boolean isBreakReasonValid(int breakReason) {
-        DeviceType dockType = runtimeConfig.getDockType();
+        DockModel dockType = runtimeConfig.getDockType();
         // 三版本共有值
         if (BREAK_REASON_BASE.contains(breakReason)) {
             return true;
         }
         // 528=接近用户自定义飞行区边界（仅 Dock1）
         if (breakReason == BREAK_REASON_528) {
-            return dockType == DeviceType.DOCK1;
+            return dockType == DockModel.DOCK1;
         }
         // 529=有障碍物或者禁飞区域，导致航线无法到达（仅 Dock2）
         if (breakReason == BREAK_REASON_529) {
-            return dockType == DeviceType.DOCK2;
+            return dockType == DockModel.DOCK2;
         }
         return false;
     }
@@ -294,11 +338,11 @@ public class WaylineTaskSimulator {
      * dock3=517（飞行器触发避障，dock3 无自定义飞行区对应枚举值）。</p>
      */
     private int defaultBreakReason() {
-        DeviceType dockType = runtimeConfig.getDockType();
-        if (dockType == DeviceType.DOCK1) {
+        DockModel dockType = runtimeConfig.getDockType();
+        if (dockType == DockModel.DOCK1) {
             return 528;
         }
-        if (dockType == DeviceType.DOCK2) {
+        if (dockType == DockModel.DOCK2) {
             return 529;
         }
         return 517; // DOCK3 及其他
@@ -308,22 +352,21 @@ public class WaylineTaskSimulator {
      * flighttask_prepare：任务准备。回复 result=0，更新 dock 状态。
      */
     private Map<String, Object> handlePrepare(JsonNode data) {
-        if (data != null && data.has("flight_id")) {
-            currentFlightId = data.path("flight_id").asText();
-        }
-
-        // 解析任务参数（当前仅解析记录，为未来功能扩展做准备）
         if (data != null) {
-            logFlightTaskPrepareParams(data);
+            var req = MessageCodec.fromJson(data.toString(), FlighttaskPrepareRequest.class);
+            currentFlightId = req.flightId();
+
+            // 解析任务参数（当前仅解析记录，为未来功能扩展做准备）
+            logFlightTaskPrepareParams(req);
             // 提取返航高度到 state，供 return_home_info 使用
             // DJI 文档约束：rth_altitude int, min=20, max=1500, 单位 m（相对起飞点 ALT）
-            if (data.has("rth_altitude")) {
-                state.setRthAltitude(data.path("rth_altitude").asInt());
+            if (req.rthAltitude() != null) {
+                state.setRthAltitude(req.rthAltitude());
             }
         }
 
-        // 机场进入工作模式
-        state.setDockModeCode(1);
+        // 机场进入作业模式（mode_code=4=作业中）
+        state.setDockModeCode(4);
         state.setCoverOpen(true);
         state.setDroneChargeState(0);
         log.info("任务准备完成: flightId={}", currentFlightId);
@@ -335,9 +378,9 @@ public class WaylineTaskSimulator {
      * <p>核实依据：[Dock3 wayline.html] Service flighttask_prepare Data。
      * 当前仅解析记录，为未来功能扩展（条件任务/断点续飞/模拟器任务等）做准备。</p>
      */
-    private void logFlightTaskPrepareParams(JsonNode data) {
+    private void logFlightTaskPrepareParams(FlighttaskPrepareRequest req) {
         // 任务类型
-        int taskType = data.path("task_type").asInt(-1);
+        int taskType = req.taskType() != null ? req.taskType() : -1;
         String taskTypeStr = switch (taskType) {
             case 0 -> "立即任务";
             case 1 -> "定时任务";
@@ -345,62 +388,63 @@ public class WaylineTaskSimulator {
             default -> "未知(" + taskType + ")";
         };
         log.info("任务参数: flightId={}, taskType={}, executeTime={}",
-                data.path("flight_id").asText(),
+                req.flightId(),
                 taskTypeStr,
-                data.has("execute_time") ? data.path("execute_time").asLong() : "-");
+                req.executeTime() != null ? req.executeTime() : "-");
 
         // 航线文件
-        JsonNode file = data.path("file");
-        if (!file.isMissingNode()) {
-            log.info("航线文件: url={}, fingerprint={}", file.path("url").asText(), file.path("fingerprint").asText());
+        var file = req.file();
+        if (file != null) {
+            log.info("航线文件: url={}, fingerprint={}", file.url(), file.fingerprint());
         }
 
         // 返航参数与失控动作
         log.info("返航/失控参数: rthAltitude={}, rthMode={}, outOfControlAction={}, exitWaylineWhenRcLost={}, waylinePrecisionType={}",
-                data.has("rth_altitude") ? data.path("rth_altitude").asInt() : "-",
-                data.has("rth_mode") ? data.path("rth_mode").asInt() : "-",
-                data.has("out_of_control_action") ? data.path("out_of_control_action").asInt() : "-",
-                data.has("exit_wayline_when_rc_lost") ? data.path("exit_wayline_when_rc_lost").asInt() : "-",
-                data.has("wayline_precision_type") ? data.path("wayline_precision_type").asInt() : "-");
+                req.rthAltitude() != null ? req.rthAltitude() : "-",
+                req.rthMode() != null ? req.rthMode() : "-",
+                req.outOfControlAction() != null ? req.outOfControlAction() : "-",
+                req.exitWaylineWhenRcLost() != null ? req.exitWaylineWhenRcLost() : "-",
+                req.waylinePrecisionType() != null ? req.waylinePrecisionType() : "-");
 
         // 条件任务就绪条件（task_type=2 时必填）
-        JsonNode readyConditions = data.path("ready_conditions");
-        if (!readyConditions.isMissingNode()) {
+        var readyConditions = req.readyConditions();
+        if (readyConditions != null) {
             log.info("任务就绪条件: batteryCapacity={}, beginTime={}, endTime={}",
-                    readyConditions.path("battery_capacity").asInt(),
-                    readyConditions.path("begin_time").asLong(),
-                    readyConditions.path("end_time").asLong());
+                    readyConditions.batteryCapacity() != null ? readyConditions.batteryCapacity() : 0,
+                    readyConditions.beginTime() != null ? readyConditions.beginTime() : 0L,
+                    readyConditions.endTime() != null ? readyConditions.endTime() : 0L);
         }
 
         // 执行条件
-        JsonNode executableConditions = data.path("executable_conditions");
-        if (!executableConditions.isMissingNode()) {
-            log.info("执行条件: storageCapacity={}", executableConditions.path("storage_capacity").asInt());
+        var executableConditions = req.executableConditions();
+        if (executableConditions != null) {
+            log.info("执行条件: storageCapacity={}",
+                    executableConditions.storageCapacity() != null ? executableConditions.storageCapacity() : 0);
         }
 
         // 断点续飞
-        JsonNode breakPoint = data.path("break_point");
-        if (!breakPoint.isMissingNode()) {
+        var breakPoint = req.breakPoint();
+        if (breakPoint != null) {
             log.info("断点续飞: index={}, state={}, progress={}, waylineId={}",
-                    breakPoint.path("index").asInt(),
-                    breakPoint.path("state").asInt(),
-                    breakPoint.path("progress").asDouble(),
-                    breakPoint.path("wayline_id").asInt());
+                    breakPoint.index() != null ? breakPoint.index() : 0,
+                    breakPoint.state() != null ? breakPoint.state() : 0,
+                    breakPoint.progress() != null ? breakPoint.progress() : 0.0,
+                    breakPoint.waylineId() != null ? breakPoint.waylineId() : 0);
         }
 
         // 模拟器任务
-        JsonNode simulateMission = data.path("simulate_mission");
-        if (!simulateMission.isMissingNode()) {
+        var simulateMission = req.simulateMission();
+        if (simulateMission != null) {
             log.info("模拟器任务: isEnable={}, lat={}, lng={}, alt={}",
-                    simulateMission.path("is_enable").asInt(),
-                    simulateMission.path("latitude").asDouble(),
-                    simulateMission.path("longitude").asDouble(),
-                    simulateMission.path("altitude").asDouble());
+                    simulateMission.isEnable() != null ? simulateMission.isEnable() : 0,
+                    simulateMission.latitude() != null ? simulateMission.latitude() : 0.0,
+                    simulateMission.longitude() != null ? simulateMission.longitude() : 0.0,
+                    simulateMission.altitude() != null ? simulateMission.altitude() : 0.0);
         }
 
         // 飞行安全预检查
-        if (data.has("flight_safety_advance_check")) {
-            log.info("飞行安全预检查: {}", data.path("flight_safety_advance_check").asInt());
+        if (req.flightSafetyAdvanceCheck() != null) {
+            log.info("飞行安全预检查: {}", req.flightSafetyAdvanceCheck());
         }
     }
 
@@ -409,13 +453,14 @@ public class WaylineTaskSimulator {
      * <p>解析 multi_dock_task 蛙跳任务参数（如有），当前仅解析记录，未用于执行逻辑。</p>
      */
     private Map<String, Object> handleExecute(JsonNode data) {
-        if (data != null && data.has("flight_id")) {
-            currentFlightId = data.path("flight_id").asText();
-        }
+        if (data != null) {
+            var req = MessageCodec.fromJson(data.toString(), FlighttaskExecuteRequest.class);
+            currentFlightId = req.flightId();
 
-        // 解析蛙跳任务参数（multi_dock_task），当前仅解析记录，为未来蛙跳任务支持做准备
-        if (data != null && data.has("multi_dock_task")) {
-            parseMultiDockTask(data.path("multi_dock_task"));
+            // 解析蛙跳任务参数（multi_dock_task），当前仅解析记录，为未来蛙跳任务支持做准备
+            if (req.multiDockTask() != null) {
+                parseMultiDockTask(req.multiDockTask());
+            }
         }
 
         currentTrackId = UUID.randomUUID().toString();
@@ -438,35 +483,36 @@ public class WaylineTaskSimulator {
      * <p>核实依据：[Dock3 wayline.html] Service flighttask_execute Data.multi_dock_task。
      * 当前仅解析记录日志，未用于执行逻辑。未来实现蛙跳任务时可直接复用此解析逻辑。</p>
      */
-    private void parseMultiDockTask(JsonNode multiDockTask) {
+    private void parseMultiDockTask(MultiDockTask multiDockTask) {
         // 图传连接拓扑
-        JsonNode wirelessLinkTopo = multiDockTask.path("wireless_link_topo");
-        if (!wirelessLinkTopo.isMissingNode()) {
-            JsonNode secretCode = wirelessLinkTopo.path("secret_code");
-            JsonNode centerNode = wirelessLinkTopo.path("center_node");
-            JsonNode leafNodes = wirelessLinkTopo.path("leaf_nodes");
+        var wirelessLinkTopo = multiDockTask.wirelessLinkTopo();
+        if (wirelessLinkTopo != null) {
+            var centerNode = wirelessLinkTopo.centerNode();
+            var leafNodes = wirelessLinkTopo.leafNodes();
             log.info("蛙跳任务图传拓扑: secret_code.size={}, center_node.sn={}, leaf_nodes.size={}",
-                    secretCode.size(), centerNode.path("sn").asText(), leafNodes.size());
+                    wirelessLinkTopo.secretCode() != null ? wirelessLinkTopo.secretCode().size() : 0,
+                    centerNode != null ? centerNode.sn() : "-",
+                    leafNodes != null ? leafNodes.size() : 0);
         }
 
         // 机场信息
-        JsonNode dockInfos = multiDockTask.path("dock_infos");
-        if (dockInfos.isArray()) {
-            for (JsonNode dockInfo : dockInfos) {
+        var dockInfos = multiDockTask.dockInfos();
+        if (dockInfos != null) {
+            for (var dockInfo : dockInfos) {
                 log.info("蛙跳任务机场: sn={}, dock_type={}, index={}, lat={}, lng={}, height={}",
-                        dockInfo.path("sn").asText(),
-                        dockInfo.path("dock_type").asText(),
-                        dockInfo.path("index").asInt(),
-                        dockInfo.path("latitude").asDouble(),
-                        dockInfo.path("longitude").asDouble(),
-                        dockInfo.path("height").asDouble());
+                        dockInfo.sn(),
+                        dockInfo.dockType(),
+                        dockInfo.index() != null ? dockInfo.index() : 0,
+                        dockInfo.latitude() != null ? dockInfo.latitude() : 0.0,
+                        dockInfo.longitude() != null ? dockInfo.longitude() : 0.0,
+                        dockInfo.height() != null ? dockInfo.height() : 0.0);
             }
         }
 
         // M-2：蛙跳任务参数已解析但当前不用于执行逻辑
         String inference = "flighttask_execute的multi_dock_task蛙跳任务参数已解析（wireless_link_topo/dock_infos），"
                 + "但当前模拟器仅支持普通航线任务，未将蛙跳参数用于执行逻辑，待后续实现蛙跳任务支持";
-        diagnosticRecorder.record(DiagnosticCode.MONITOR_SIMULATOR_INFERENCE, "flighttask_execute", inference);
+        diagnosticRecorder.record(DiagnosticCode.MONITOR_SIMULATOR_INFERENCE, ServiceMethod.FLIGHTTASK_EXECUTE.methodName(), inference);
         log.warn("[M-2] 蛙跳任务参数已解析但未用于执行逻辑，待后续实现蛙跳任务支持");
     }
 
@@ -506,15 +552,15 @@ public class WaylineTaskSimulator {
      * <p>核实依据：[Dock1 wayline.html 取消准备中的任务](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock1/wayline.html)
      * 返回码 326108/326109 原文</p>
      */
-    private Map<String, Object> handleStop(JsonNode data) {
+    private Map<String, Object> handleStop(String method, JsonNode data) {
         // 解析请求参数（flighttask_stop 的 flight_id/reason，flighttask_undo 的 flight_ids）
         if (data != null) {
-            if (data.has("flight_id")) {
-                log.info("任务终止请求: flight_id={}, reason={}", data.path("flight_id").asText(),
-                        data.has("reason") ? data.path("reason").asInt() : "-");
-            }
-            if (data.has("flight_ids")) {
-                log.info("取消任务请求: flight_ids={}", data.path("flight_ids"));
+            if (ServiceMethod.FLIGHTTASK_STOP.methodName().equals(method)) {
+                var req = MessageCodec.fromJson(data.toString(), FlighttaskStopRequest.class);
+                log.info("任务终止请求: flight_id={}, reason={}", req.flightId(), req.reason());
+            } else {
+                var req = MessageCodec.fromJson(data.toString(), FlighttaskUndoRequest.class);
+                log.info("取消任务请求: flight_ids={}", req.flightIds());
             }
         }
 
@@ -564,7 +610,7 @@ public class WaylineTaskSimulator {
         // M-2：return_home 命令的后续行为（不发 return_home_info、无进度上报）DJI 文档未明确，待真机验证
         String inference = "return_home命令后续行为：不发return_home_info（该事件含flight_id属航线任务关联）+ 无进度上报（flighttask_progress的返航阶段属航线任务）"
                 + "，DJI文档未明确return_home命令的后续事件/进度机制，待真机验证";
-        diagnosticRecorder.record(DiagnosticCode.MONITOR_SIMULATOR_INFERENCE, "return_home", inference);
+        diagnosticRecorder.record(DiagnosticCode.MONITOR_SIMULATOR_INFERENCE, ServiceMethod.RETURN_HOME.methodName(), inference);
         log.warn("[M-2] return_home 后续行为未确认: 不发return_home_info + 无进度上报，待真机验证");
 
         log.info("无人机返航: flightId={}", currentFlightId);
@@ -611,8 +657,9 @@ public class WaylineTaskSimulator {
      * 核实依据：[Dock3 wayline.html] Service return_specific_home Data.home_dock_sn。</p>
      */
     private Map<String, Object> handleReturnSpecificHome(JsonNode data) {
-        if (data != null && data.has("home_dock_sn")) {
-            log.info("指定home点返航: homeDockSn={}", data.path("home_dock_sn").asText());
+        if (data != null) {
+            var req = MessageCodec.fromJson(data.toString(), ReturnSpecificHomeRequest.class);
+            log.info("指定home点返航: homeDockSn={}", req.homeDockSn());
         }
         return Map.of("result", 0);
     }
@@ -625,18 +672,18 @@ public class WaylineTaskSimulator {
      */
     private Map<String, Object> handleInFlightWaylineDeliver(JsonNode data) {
         if (data != null) {
-            String waylineId = data.path("in_flight_wayline_id").asText();
-            JsonNode file = data.path("file");
+            var req = MessageCodec.fromJson(data.toString(), InFlightWaylineDeliverRequest.class);
+            var file = req.file();
             log.info("空中下发航线: waylineId={}, file.url={}, file.fingerprint={}",
-                    waylineId,
-                    file.path("url").asText(),
-                    file.path("fingerprint").asText());
+                    req.inFlightWaylineId(),
+                    file != null ? file.url() : "",
+                    file != null ? file.fingerprint() : "");
             log.info("空中航线参数: outOfControlAction={}, exitWaylineWhenRcLost={}, rthAltitude={}, rthMode={}, waylinePrecisionType={}",
-                    data.has("out_of_control_action") ? data.path("out_of_control_action").asInt() : "-",
-                    data.has("exit_wayline_when_rc_lost") ? data.path("exit_wayline_when_rc_lost").asInt() : "-",
-                    data.has("rth_altitude") ? data.path("rth_altitude").asInt() : "-",
-                    data.has("rth_mode") ? data.path("rth_mode").asInt() : "-",
-                    data.has("wayline_precision_type") ? data.path("wayline_precision_type").asInt() : "-");
+                    req.outOfControlAction() != null ? req.outOfControlAction() : "-",
+                    req.exitWaylineWhenRcLost() != null ? req.exitWaylineWhenRcLost() : "-",
+                    req.rthAltitude() != null ? req.rthAltitude() : "-",
+                    req.rthMode() != null ? req.rthMode() : "-",
+                    req.waylinePrecisionType() != null ? req.waylinePrecisionType() : "-");
         }
         return Map.of("result", 0);
     }
@@ -648,7 +695,8 @@ public class WaylineTaskSimulator {
      */
     private Map<String, Object> handleInFlightWaylineStop(JsonNode data) {
         if (data != null) {
-            log.info("暂停空中航线: waylineId={}", data.path("in_flight_wayline_id").asText());
+            var req = MessageCodec.fromJson(data.toString(), InFlightWaylineStopRequest.class);
+            log.info("暂停空中航线: waylineId={}", req.inFlightWaylineId());
         }
         return Map.of("result", 0);
     }
@@ -660,7 +708,8 @@ public class WaylineTaskSimulator {
      */
     private Map<String, Object> handleInFlightWaylineRecover(JsonNode data) {
         if (data != null) {
-            log.info("恢复空中航线: waylineId={}", data.path("in_flight_wayline_id").asText());
+            var req = MessageCodec.fromJson(data.toString(), InFlightWaylineRecoverRequest.class);
+            log.info("恢复空中航线: waylineId={}", req.inFlightWaylineId());
         }
         return Map.of("result", 0);
     }
@@ -787,11 +836,11 @@ public class WaylineTaskSimulator {
      * 因此按 stepIndex 更新状态，避免 Dock1/Dock2/3 的 current_step 值差异导致 case 不匹配。</p>
      * <p>位置更新策略（简化版，对齐用户期望"仅经纬度变化"）：
      * <ul>
-     *   <li>stepIndex 0（开机检查+开盖）：dockModeCode=1</li>
-     *   <li>stepIndex 1（起飞）：droneModeCode=4，位置=机场，高度=0</li>
-     *   <li>stepIndex 2（返航检查）：droneModeCode=5，位置偏移约100米，高度=50</li>
-     *   <li>stepIndex 3（降落）：droneModeCode=9，位置=机场，高度=20</li>
-     *   <li>stepIndex 4（退出工作模式）：droneModeCode=10，位置=机场，高度=0</li>
+     *   <li>stepIndex 0（开机检查+开盖）：dockModeCode=4（作业中）</li>
+     *   <li>stepIndex 1（起飞）：droneModeCode=4（自动起飞），位置=机场，高度=0</li>
+     *   <li>stepIndex 2（航线飞行）：droneModeCode=5（航线飞行），位置偏移约100米，高度=50</li>
+     *   <li>stepIndex 3（返航）：droneModeCode=9（自动返航），位置=机场，高度=20</li>
+     *   <li>stepIndex 4（降落）：droneModeCode=10（自动降落），位置=机场，高度=0</li>
      *   <li>stepIndex 5（通知任务结果）：droneModeCode=0</li>
      * </ul>
      * <p>高度字段 droneHeight 为"相对起飞点"高度，与用户期望一致。</p>
@@ -800,7 +849,7 @@ public class WaylineTaskSimulator {
         double baseLat = runtimeConfig.getLocationLatitude();
         double baseLng = runtimeConfig.getLocationLongitude();
         switch (stepIndex) {
-            case 0 -> { state.setDockModeCode(1); } // 开机检查+开盖
+            case 0 -> { state.setDockModeCode(4); } // 作业中（开机检查+开盖）
             case 1 -> { // 起飞
                 state.setDroneModeCode(4);
                 state.setDroneLatitude(baseLat);
@@ -890,9 +939,9 @@ public class WaylineTaskSimulator {
         // 校验 break_reason 是否在当前 Dock 型号合法
         if (breakReason != 0 && !isBreakReasonValid(breakReason)) {
             log.warn("[P-8] break_reason={} 在当前 Dock 类型 {} 中非法，拒绝发送 flighttask_progress",
-                    breakReason, runtimeConfig.getDockType().getShortName());
+                    breakReason, runtimeConfig.getDockType().shortName());
             diagnosticRecorder.record(DiagnosticCode.PLATFORM_DOCK_CAPABILITY_MISMATCH, "flighttask_progress",
-                    "break_reason=" + breakReason + " 在 Dock " + runtimeConfig.getDockType().getShortName() + " 中非法");
+                    "break_reason=" + breakReason + " 在 Dock " + runtimeConfig.getDockType().shortName() + " 中非法");
             return;
         }
 
@@ -937,7 +986,7 @@ public class WaylineTaskSimulator {
         data.put("output", output);
         data.put("result", 0);
 
-        publishEvent("flighttask_progress", data);
+        publishEvent(EventMethod.FLIGHTTASK_PROGRESS, data);
     }
 
     /**
@@ -951,9 +1000,9 @@ public class WaylineTaskSimulator {
     public boolean publishProgressFailedWithBreakReason(int breakReason) {
         if (!isBreakReasonValid(breakReason)) {
             log.warn("[P-8] break_reason={} 在当前 Dock 类型 {} 中非法，拒绝发送 flighttask_progress(failed)",
-                    breakReason, runtimeConfig.getDockType().getShortName());
+                    breakReason, runtimeConfig.getDockType().shortName());
             diagnosticRecorder.record(DiagnosticCode.PLATFORM_DOCK_CAPABILITY_MISMATCH, "flighttask_progress",
-                    "break_reason=" + breakReason + " 在 Dock " + runtimeConfig.getDockType().getShortName() + " 中非法");
+                    "break_reason=" + breakReason + " 在 Dock " + runtimeConfig.getDockType().shortName() + " 中非法");
             return false;
         }
         int stepIndex = currentStepIndex;
@@ -1018,8 +1067,8 @@ public class WaylineTaskSimulator {
         data.put("flight_id", currentFlightId != null ? currentFlightId : "");
 
         // home_dock_sn 和 multi_dock_home_info 仅 Dock2/3 支持（蛙跳场景），Dock1 无此字段
-        DeviceType dockType = runtimeConfig.getDockType();
-        if (dockType != DeviceType.DOCK1) {
+        DockModel dockType = runtimeConfig.getDockType();
+        if (dockType != DockModel.DOCK1) {
             data.put("home_dock_sn", runtimeConfig.getDockSn());
 
             // 蛙跳任务机场返航信息（当前机场作为 home 点）
@@ -1033,7 +1082,7 @@ public class WaylineTaskSimulator {
             data.put("multi_dock_home_info", multiDockHomeInfo);
         }
 
-        publishEvent("return_home_info", data);
+        publishEvent(EventMethod.RETURN_HOME_INFO, data);
     }
 
     /**
@@ -1044,7 +1093,7 @@ public class WaylineTaskSimulator {
     public void publishFlighttaskReady(List<String> flightIds) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("flight_ids", flightIds);
-        publishEvent("flighttask_ready", data);
+        publishEvent(EventMethod.FLIGHTTASK_READY, data);
         log.info("已发送任务就绪通知: flightIds={}", flightIds);
     }
 
@@ -1059,7 +1108,7 @@ public class WaylineTaskSimulator {
         data.put("sn", runtimeConfig.getDockSn());
         data.put("action", action);
         data.put("reason", reason);
-        publishEventWithReply("device_exit_homing_notify", data);
+        publishEventWithReply(EventMethod.DEVICE_EXIT_HOMING_NOTIFY, data);
 
         // M-2：reason 字段类型 DJI 文档字段定义为 enum_int，但示例中为字符串 "0"，待真机验证
         String inference = "device_exit_homing_notify的reason字段类型：DJI文档字段定义为enum_int，但示例中\"reason\":\"0\"为字符串。"
@@ -1084,11 +1133,11 @@ public class WaylineTaskSimulator {
      */
     public boolean publishFlightSetupExceptionNotify(String flightId, int timeoutTime, int flightType) {
         // P-8：仅 Dock1 支持该 event
-        if (runtimeConfig.getDockType() != DeviceType.DOCK1) {
+        if (runtimeConfig.getDockType() != DockModel.DOCK1) {
             log.warn("[P-8] 当前 Dock 类型 {} 不支持事件: flight_setup_exception_notify（仅 Dock1 支持）",
-                    runtimeConfig.getDockType().getShortName());
-            diagnosticRecorder.record(DiagnosticCode.PLATFORM_DOCK_CAPABILITY_MISMATCH, "flight_setup_exception_notify",
-                    "Dock " + runtimeConfig.getDockType().getShortName() + " 不支持此事件（仅 Dock1）");
+                    runtimeConfig.getDockType().shortName());
+            diagnosticRecorder.record(DiagnosticCode.PLATFORM_DOCK_CAPABILITY_MISMATCH, EventMethod.FLIGHT_SETUP_EXCEPTION_NOTIFY.methodName(),
+                    "Dock " + runtimeConfig.getDockType().shortName() + " 不支持此事件（仅 Dock1）");
             return false;
         }
 
@@ -1102,12 +1151,12 @@ public class WaylineTaskSimulator {
         data.put("sn", runtimeConfig.getDockSn());
         data.put("timeout_time", timeoutTime);
         data.put("timestamp", (double) System.currentTimeMillis());
-        publishEventWithReply("flight_setup_exception_notify", data);
+        publishEventWithReply(EventMethod.FLIGHT_SETUP_EXCEPTION_NOTIFY, data);
 
         // M-2：flight_id 字段 DJI 文档 Data 表未列出，但 Example 中包含，按 Example 实现，待真机验证
         String inference = "flight_setup_exception_notify的flight_id字段：DJI文档Data表仅定义sn/timeout_time/timestamp/flight_type四个字段，"
                 + "但Example中包含flight_id。当前按Example实现(包含flight_id)，待真机验证平台是否需要该字段关联任务";
-        diagnosticRecorder.record(DiagnosticCode.MONITOR_SIMULATOR_INFERENCE, "flight_setup_exception_notify", inference);
+        diagnosticRecorder.record(DiagnosticCode.MONITOR_SIMULATOR_INFERENCE, EventMethod.FLIGHT_SETUP_EXCEPTION_NOTIFY.methodName(), inference);
         log.warn("[M-2] flight_setup_exception_notify flight_id字段未确认: Data表未列出但Example包含，按Example实现(包含)，待真机验证");
 
         log.info("已发送任务准备异常通知: flightId={}, timeout_time={}min, flight_type={}", effectiveFlightId, timeoutTime, flightType);
@@ -1132,37 +1181,34 @@ public class WaylineTaskSimulator {
         data.put("status", status);
         data.put("result", result);
         data.put("way_point_index", wayPointIndex);
-        publishEvent("in_flight_wayline_progress", data);
+        publishEvent(EventMethod.IN_FLIGHT_WAYLINE_PROGRESS, data);
         log.info("已发送空中下发航线状态: waylineId={}, percent={}, status={}", waylineId, percent, status);
     }
 
     /**
      * 发布事件到 thing/product/{sn}/events。
      */
-    private void publishEvent(String method, Map<String, Object> data) {
-        publishEventCore(method, data, 0);
+    private void publishEvent(EventMethod method, Map<String, Object> data) {
+        publishEventCore(method, data);
     }
 
     /**
      * 发布事件到 thing/product/{sn}/events，need_reply=1。
      */
-    private void publishEventWithReply(String method, Map<String, Object> data) {
-        publishEventCore(method, data, 1);
+    private void publishEventWithReply(EventMethod method, Map<String, Object> data) {
+        publishEventCore(method, data);
     }
 
-    private void publishEventCore(String method, Map<String, Object> data, int needReply) {
-        Map<String, Object> envelope = new LinkedHashMap<>();
-        envelope.put("bid", UUID.randomUUID().toString());
-        envelope.put("tid", UUID.randomUUID().toString());
-        envelope.put("timestamp", System.currentTimeMillis());
-        envelope.put("need_reply", needReply);
-        envelope.put("gateway", runtimeConfig.getDockSn());
-        envelope.put("method", method);
-        envelope.put("data", data);
+    private void publishEventCore(EventMethod method, Map<String, Object> data) {
+        EventEnvelope envelope = EventEnvelope.of(
+                UUID.randomUUID().toString(),
+                UUID.randomUUID().toString(),
+                System.currentTimeMillis(),
+                method, data, runtimeConfig.getDockSn());
 
         String topic = dockTopicSchema.topic(dockTopicSchema.events(), runtimeConfig.getDockSn());
-        mqtt.publishJson(topic, envelope);
-        log.info("已发送事件: method={}, need_reply={}", method, needReply);
+        mqtt.publish(topic, MessageCodec.toJson(envelope));
+        log.info("已发送事件: method={}, need_reply={}", method.methodName(), method.needReply());
     }
 
     // ==================== Requests 方向（设备→平台） ====================
@@ -1181,8 +1227,8 @@ public class WaylineTaskSimulator {
      */
     public JsonNode publishFlighttaskProgressGet(String targetSn, String flightId) {
         Map<String, Object> data = new LinkedHashMap<>();
-        DeviceType dockType = runtimeConfig.getDockType();
-        if (dockType == DeviceType.DOCK2) {
+        DockModel dockType = runtimeConfig.getDockType();
+        if (dockType == DockModel.DOCK2) {
             // Dock2: target_sn（目标设备sn）+ flight_id（目标航线任务uuid）
             data.put("target_sn", targetSn);
             data.put("flight_id", flightId != null ? flightId : "");
@@ -1190,7 +1236,7 @@ public class WaylineTaskSimulator {
             // Dock3: sn（目标设备sn）
             data.put("sn", targetSn);
         }
-        return sendRequestAndWaitReply("flighttask_progress_get", data);
+        return sendRequestAndWaitReply(RequestsMethod.FLIGHTTASK_PROGRESS_GET.methodName(), data);
     }
 
     /**
@@ -1203,7 +1249,7 @@ public class WaylineTaskSimulator {
     public JsonNode publishFlighttaskResourceGet(String flightId) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("flight_id", flightId);
-        return sendRequestAndWaitReply("flighttask_resource_get", data);
+        return sendRequestAndWaitReply(RequestsMethod.FLIGHTTASK_RESOURCE_GET.methodName(), data);
     }
 
     /**

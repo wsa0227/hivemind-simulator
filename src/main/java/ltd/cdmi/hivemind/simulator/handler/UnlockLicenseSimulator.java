@@ -16,6 +16,11 @@
 package ltd.cdmi.hivemind.simulator.handler;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import ltd.cdmi.dji.cloudapi.sdk.codec.MessageCodec;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.flysafe.UnlockLicenseListRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.flysafe.UnlockLicenseSwitchRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.flysafe.UnlockLicenseUpdateRequest;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.ServiceMethod;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -46,7 +51,9 @@ public class UnlockLicenseSimulator {
     private static final Logger log = LoggerFactory.getLogger(UnlockLicenseSimulator.class);
 
     private static final Set<String> UNLOCK_METHODS =
-            Set.of("unlock_license_switch", "unlock_license_update", "unlock_license_list");
+            Set.of(ServiceMethod.UNLOCK_LICENSE_SWITCH.methodName(),
+                    ServiceMethod.UNLOCK_LICENSE_UPDATE.methodName(),
+                    ServiceMethod.UNLOCK_LICENSE_LIST.methodName());
 
     /** 证书启用状态：license_id → enabled（switch 修改此状态，list 读取此状态） */
     private final ConcurrentHashMap<Integer, Boolean> licenseEnabled = new ConcurrentHashMap<>();
@@ -71,8 +78,9 @@ public class UnlockLicenseSimulator {
      * @return services_reply 的 output
      */
     public Map<String, Object> handleSwitch(JsonNode data) {
-        int licenseId = data.path("license_id").asInt();
-        boolean enable = data.path("enable").asBoolean();
+        var req = MessageCodec.fromJson(data.toString(), UnlockLicenseSwitchRequest.class);
+        int licenseId = req.licenseId();
+        boolean enable = req.enable();
 
         licenseEnabled.put(licenseId, enable);
         log.info("unlock_license_switch: license_id={}, enable={}", licenseId, enable);
@@ -94,12 +102,13 @@ public class UnlockLicenseSimulator {
      * @return services_reply 的 output
      */
     public Map<String, Object> handleUpdate(JsonNode data) {
-        JsonNode file = data.path("file");
-        if (file.isMissingNode() || file.isNull()) {
+        var req = MessageCodec.fromJson(data.toString(), UnlockLicenseUpdateRequest.class);
+        UnlockLicenseUpdateRequest.LicenseFile file = req.file();
+        if (file == null) {
             log.info("unlock_license_update: 无 file，按 Flysafe 服务器最新证书更新");
         } else {
-            String url = file.path("url").asText();
-            String fingerprint = file.path("fingerprint").asText();
+            String url = file.url();
+            String fingerprint = file.fingerprint();
             log.info("unlock_license_update: file url={}, fingerprint={}", url, fingerprint);
         }
 
@@ -117,7 +126,8 @@ public class UnlockLicenseSimulator {
      * @return services_reply 的 output
      */
     public Map<String, Object> handleList(JsonNode data) {
-        int deviceModelDomain = data.path("device_model_domain").asInt(0);
+        var req = MessageCodec.fromJson(data.toString(), UnlockLicenseListRequest.class);
+        int deviceModelDomain = req.deviceModelDomain();
         log.info("unlock_license_list: device_model_domain={}", deviceModelDomain);
 
         List<Map<String, Object>> licenses = new ArrayList<>();

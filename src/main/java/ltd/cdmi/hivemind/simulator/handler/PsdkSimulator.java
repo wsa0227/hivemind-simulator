@@ -16,10 +16,24 @@
 package ltd.cdmi.hivemind.simulator.handler;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import ltd.cdmi.dji.cloudapi.sdk.codec.MessageCodec;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.psdk.CustomDataTransmissionToPsdkRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.psdk.PsdkInputBoxTextSetRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.psdk.PsdkWidgetValueSetRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.psdk.SpeakerAudioPlayStartRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.psdk.SpeakerPlayModeSetRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.psdk.SpeakerPlayStopRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.psdk.SpeakerPlayVolumeSetRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.psdk.SpeakerReplayRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.psdk.SpeakerTtsPlayStartRequest;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.envelope.EventEnvelope;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.EventMethod;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.device.DockOnlineService;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticCode;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticLogRecorder;
+import ltd.cdmi.hivemind.simulator.media.MediaUploader;
+import ltd.cdmi.hivemind.simulator.media.StorageConfig;
 import ltd.cdmi.hivemind.simulator.mqtt.MqttClientManager;
 import ltd.cdmi.hivemind.simulator.mqtt.DockTopicSchema;
 import org.slf4j.Logger;
@@ -210,8 +224,9 @@ public class PsdkSimulator {
 
     /** speaker_play_volume_set：记录音量到内部状态，返回 result=0 */
     private Map<String, Object> handleVolumeSet(JsonNode data) {
-        int psdkIndex = data.path("psdk_index").asInt();
-        int volume = data.path("play_volume").asInt();
+        var req = MessageCodec.fromJson(data.toString(), SpeakerPlayVolumeSetRequest.class);
+        int psdkIndex = req.psdkIndex();
+        int volume = req.playVolume();
         speakerVolume.put(psdkIndex, volume);
         log.info("speaker_play_volume_set: psdk_index={}, play_volume={}", psdkIndex, volume);
         return Map.of("result", 0);
@@ -219,8 +234,9 @@ public class PsdkSimulator {
 
     /** speaker_play_mode_set：记录播放模式到内部状态，返回 result=0 */
     private Map<String, Object> handleModeSet(JsonNode data) {
-        int psdkIndex = data.path("psdk_index").asInt();
-        int playMode = data.path("play_mode").asInt();
+        var req = MessageCodec.fromJson(data.toString(), SpeakerPlayModeSetRequest.class);
+        int psdkIndex = req.psdkIndex();
+        int playMode = req.playMode();
         speakerPlayMode.put(psdkIndex, playMode);
         log.info("speaker_play_mode_set: psdk_index={}, play_mode={}", psdkIndex, playMode);
         return Map.of("result", 0);
@@ -228,7 +244,8 @@ public class PsdkSimulator {
 
     /** speaker_play_stop：将播放状态置为 false，返回 result=0 */
     private Map<String, Object> handlePlayStop(JsonNode data) {
-        int psdkIndex = data.path("psdk_index").asInt();
+        var req = MessageCodec.fromJson(data.toString(), SpeakerPlayStopRequest.class);
+        int psdkIndex = req.psdkIndex();
         speakerPlaying.put(psdkIndex, false);
         log.info("speaker_play_stop: psdk_index={}", psdkIndex);
         return Map.of("result", 0);
@@ -236,7 +253,8 @@ public class PsdkSimulator {
 
     /** speaker_replay：将播放状态置为 true（重新播放），返回 result=0 */
     private Map<String, Object> handleReplay(JsonNode data) {
-        int psdkIndex = data.path("psdk_index").asInt();
+        var req = MessageCodec.fromJson(data.toString(), SpeakerReplayRequest.class);
+        int psdkIndex = req.psdkIndex();
         speakerPlaying.put(psdkIndex, true);
         log.info("speaker_replay: psdk_index={}", psdkIndex);
         return Map.of("result", 0);
@@ -244,12 +262,12 @@ public class PsdkSimulator {
 
     /** speaker_tts_play_start：记录 tts 信息并将播放状态置为 true，返回 result=0 */
     private Map<String, Object> handleTtsPlayStart(JsonNode data) {
-        int psdkIndex = data.path("psdk_index").asInt();
-        JsonNode tts = data.path("tts");
+        var req = MessageCodec.fromJson(data.toString(), SpeakerTtsPlayStartRequest.class);
+        int psdkIndex = req.psdkIndex();
         Map<String, String> ttsInfo = new LinkedHashMap<>();
-        ttsInfo.put("name", tts.path("name").asText());
-        ttsInfo.put("text", tts.path("text").asText());
-        ttsInfo.put("md5", tts.path("md5").asText());
+        ttsInfo.put("name", req.tts().name());
+        ttsInfo.put("text", req.tts().text());
+        ttsInfo.put("md5", req.tts().md5());
         lastTts.put(psdkIndex, ttsInfo);
         speakerPlaying.put(psdkIndex, true);
         log.info("speaker_tts_play_start: psdk_index={}, tts.name={}, tts.md5={}",
@@ -259,13 +277,13 @@ public class PsdkSimulator {
 
     /** speaker_audio_play_start：记录音频文件信息并将播放状态置为 true，返回 result=0 */
     private Map<String, Object> handleAudioPlayStart(JsonNode data) {
-        int psdkIndex = data.path("psdk_index").asInt();
-        JsonNode file = data.path("file");
+        var req = MessageCodec.fromJson(data.toString(), SpeakerAudioPlayStartRequest.class);
+        int psdkIndex = req.psdkIndex();
         Map<String, String> fileInfo = new LinkedHashMap<>();
-        fileInfo.put("name", file.path("name").asText());
-        fileInfo.put("url", file.path("url").asText());
-        fileInfo.put("md5", file.path("md5").asText());
-        fileInfo.put("format", file.path("format").asText());
+        fileInfo.put("name", req.file().name());
+        fileInfo.put("url", req.file().url());
+        fileInfo.put("md5", req.file().md5());
+        fileInfo.put("format", req.file().format());
         lastAudioFile.put(psdkIndex, fileInfo);
         speakerPlaying.put(psdkIndex, true);
         log.info("speaker_audio_play_start: psdk_index={}, file.name={}, file.format={}",
@@ -278,8 +296,9 @@ public class PsdkSimulator {
      * <p>输入框内容同步推送到浮窗（services 应答 + events 上报联动）。</p>
      */
     private Map<String, Object> handleInputBoxTextSet(JsonNode data) {
-        int psdkIndex = data.path("psdk_index").asInt();
-        String value = data.path("value").asText();
+        var req = MessageCodec.fromJson(data.toString(), PsdkInputBoxTextSetRequest.class);
+        int psdkIndex = req.psdkIndex();
+        String value = req.value();
         inputBoxText.put(psdkIndex, value);
         log.info("psdk_input_box_text_set: psdk_index={}, value={}", psdkIndex, value);
 
@@ -287,16 +306,17 @@ public class PsdkSimulator {
         Map<String, Object> eventData = new LinkedHashMap<>();
         eventData.put("psdk_index", psdkIndex);
         eventData.put("value", value);
-        publishEvent("psdk_floating_window_text", eventData);
+        publishEvent(EventMethod.PSDK_FLOATING_WINDOW_TEXT, eventData);
 
         return Map.of("result", 0);
     }
 
     /** psdk_widget_value_set：记录控件值到内部状态，返回 result=0 */
     private Map<String, Object> handleWidgetValueSet(JsonNode data) {
-        int psdkIndex = data.path("psdk_index").asInt();
-        int widgetIndex = data.path("index").asInt();
-        int value = data.path("value").asInt();
+        var req = MessageCodec.fromJson(data.toString(), PsdkWidgetValueSetRequest.class);
+        int psdkIndex = req.psdkIndex();
+        int widgetIndex = req.index();
+        int value = req.value();
         widgetValues.computeIfAbsent(psdkIndex, k -> new ConcurrentHashMap<>()).put(widgetIndex, value);
         log.info("psdk_widget_value_set: psdk_index={}, widget_index={}, value={}", psdkIndex, widgetIndex, value);
         return Map.of("result", 0);
@@ -304,7 +324,8 @@ public class PsdkSimulator {
 
     /** custom_data_transmission_to_psdk：记录 cloud→PSDK 自定义消息内容，返回 result=0 */
     private Map<String, Object> handleCustomDataToPsdk(JsonNode data) {
-        String value = data.path("value").asText();
+        var req = MessageCodec.fromJson(data.toString(), CustomDataTransmissionToPsdkRequest.class);
+        String value = req.value();
         lastCustomData = value;
         log.info("custom_data_transmission_to_psdk: value={}", value);
         return Map.of("result", 0);
@@ -339,7 +360,7 @@ public class PsdkSimulator {
         progress.put("step_key", stepKey);
         output.put("progress", progress);
 
-        publishEvent("speaker_tts_play_start_progress", Map.of("result", 0, "output", output));
+        publishEvent(EventMethod.SPEAKER_TTS_PLAY_START_PROGRESS, Map.of("result", 0, "output", output));
         log.info("speaker_tts_play_start_progress 已上报: psdk_index={}, status={}, percent={}, step_key={}, md5={}",
                 psdkIndex, status, percent, stepKey, md5);
         return TriggerResult.ok();
@@ -372,7 +393,7 @@ public class PsdkSimulator {
         progress.put("step_key", stepKey);
         output.put("progress", progress);
 
-        publishEvent("speaker_audio_play_start_progress", Map.of("result", 0, "output", output));
+        publishEvent(EventMethod.SPEAKER_AUDIO_PLAY_START_PROGRESS, Map.of("result", 0, "output", output));
         log.info("speaker_audio_play_start_progress 已上报: psdk_index={}, status={}, percent={}, step_key={}, md5={}",
                 psdkIndex, status, percent, stepKey, md5);
         return TriggerResult.ok();
@@ -394,7 +415,7 @@ public class PsdkSimulator {
         data.put("psdk_index", psdkIndex);
         data.put("value", value);
 
-        publishEvent("psdk_floating_window_text", data);
+        publishEvent(EventMethod.PSDK_FLOATING_WINDOW_TEXT, data);
         log.info("psdk_floating_window_text 已上报: psdk_index={}, value={}", psdkIndex, value);
         return TriggerResult.ok();
     }
@@ -420,7 +441,7 @@ public class PsdkSimulator {
         data.put("size", size);
         data.put("result", result);
 
-        publishEvent("psdk_ui_resource_upload_result", data);
+        publishEvent(EventMethod.PSDK_UI_RESOURCE_UPLOAD_RESULT, data);
         log.info("psdk_ui_resource_upload_result 已上报: psdk_index={}, object_key={}, size={}, result={}",
                 psdkIndex, objectKey, size, result);
         return TriggerResult.ok();
@@ -440,7 +461,7 @@ public class PsdkSimulator {
         }
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("value", value);
-        publishEvent("custom_data_transmission_from_psdk", data);
+        publishEvent(EventMethod.CUSTOM_DATA_TRANSMISSION_FROM_PSDK, data);
         log.info("custom_data_transmission_from_psdk 已上报: value={}", value);
         return TriggerResult.ok();
     }
@@ -502,18 +523,15 @@ public class PsdkSimulator {
      * 发布事件到 thing/product/{sn}/events，need_reply=0（单向通知）。
      * <p>报文格式：{@code {bid, tid, timestamp, need_reply:0, gateway, method, data}}</p>
      */
-    private void publishEvent(String method, Map<String, Object> data) {
-        Map<String, Object> envelope = new LinkedHashMap<>();
-        envelope.put("bid", UUID.randomUUID().toString());
-        envelope.put("tid", UUID.randomUUID().toString());
-        envelope.put("timestamp", System.currentTimeMillis());
-        envelope.put("need_reply", 0);  // PSDK 进度/结果通知为单向，不需平台回复
-        envelope.put("gateway", runtimeConfig.getDockSn());
-        envelope.put("method", method);
-        envelope.put("data", data);
+    private void publishEvent(EventMethod method, Map<String, Object> data) {
+        EventEnvelope envelope = EventEnvelope.of(
+                UUID.randomUUID().toString(),
+                UUID.randomUUID().toString(),
+                System.currentTimeMillis(),
+                method, data, runtimeConfig.getDockSn());
 
         String topic = dockTopicSchema.topic(dockTopicSchema.events(), runtimeConfig.getDockSn());
-        mqtt.publishJson(topic, envelope);
+        mqtt.publish(topic, MessageCodec.toJson(envelope));
     }
 
     // ==================== REST API 辅助（状态查询与音频资源） ====================

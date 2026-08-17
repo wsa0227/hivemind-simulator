@@ -15,6 +15,9 @@
 
 package ltd.cdmi.hivemind.simulator.handler;
 
+import ltd.cdmi.dji.cloudapi.sdk.codec.MessageCodec;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.envelope.EventEnvelope;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.EventMethod;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.device.DeviceState;
 import ltd.cdmi.hivemind.simulator.mqtt.DockTopicSchema;
@@ -160,20 +163,17 @@ public class HmsSimulator {
                 .map(this::buildAlarmItem)
                 .toList();
 
-        Map<String, Object> data = new LinkedHashMap<>();
+        Map<String, Object> data = new java.util.LinkedHashMap<>();
         data.put("list", list);
 
-        Map<String, Object> envelope = new LinkedHashMap<>();
-        envelope.put("bid", UUID.randomUUID().toString());
-        envelope.put("tid", UUID.randomUUID().toString());
-        envelope.put("timestamp", System.currentTimeMillis());
-        envelope.put("need_reply", 0);  // DJI events 信封必填：0=不需要答复（HMS 为单向通知）
-        envelope.put("gateway", runtimeConfig.getDockSn());  // DJI events 信封必填：网关设备 SN
-        envelope.put("method", "hms");
-        envelope.put("data", data);
+        EventEnvelope envelope = EventEnvelope.of(
+                UUID.randomUUID().toString(),
+                UUID.randomUUID().toString(),
+                System.currentTimeMillis(),
+                EventMethod.HMS, data, runtimeConfig.getDockSn());
 
         String topic = dockTopicSchema.topic(dockTopicSchema.events(), runtimeConfig.getDockSn());
-        mqtt.publishJson(topic, envelope);
+        mqtt.publish(topic, MessageCodec.toJson(envelope));
     }
 
     /**

@@ -23,6 +23,7 @@ import ltd.cdmi.hivemind.simulator.handler.AirSenseSimulator.AirSenseAlert;
 import ltd.cdmi.hivemind.simulator.handler.AirSenseSimulator.TriggerResult;
 import ltd.cdmi.hivemind.simulator.mqtt.DockTopicSchema;
 import ltd.cdmi.hivemind.simulator.mqtt.MqttClientManager;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
@@ -59,6 +60,7 @@ class AirSenseSimulatorTest {
     // ==================== 事件结构验证 ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-AIRSENSE-001：airsense_warning 事件结构")
     @Test
     void airsenseWarningEventStructure() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -72,11 +74,10 @@ class AirSenseSimulatorTest {
         assertTrue(result.success());
         assertEquals(1, result.count());
 
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
 
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        JsonNode node = objectMapper.readTree(captor.getValue());
 
         // 顶层结构
         assertEquals("airsense_warning", node.path("method").asText());
@@ -84,7 +85,7 @@ class AirSenseSimulatorTest {
         assertFalse(node.path("tid").asText().isEmpty());
         assertTrue(node.path("timestamp").asLong() > 0);
 
-        // need_reply=1（AirSense 需平台回复）
+        // need_reply=1（DJI 文档 airsense_warning Example 明确 need_reply:1）
         assertEquals(1, node.path("need_reply").asInt());
 
         // data 直接是数组（非对象包裹）
@@ -95,6 +96,7 @@ class AirSenseSimulatorTest {
     // ==================== 字段完整性验证 ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-AIRSENSE-002：告警字段完整性")
     @Test
     void allFieldsPresentAndCorrect() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -104,11 +106,10 @@ class AirSenseSimulatorTest {
         AirSenseSimulator simulator = new AirSenseSimulator(mqtt, runtimeConfig(), new DockTopicSchema());
         simulator.trigger(List.of(sampleAlert()));
 
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
 
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        JsonNode node = objectMapper.readTree(captor.getValue());
 
         JsonNode item = node.path("data").get(0);
         assertEquals("B-5931", item.path("icao").asText());
@@ -126,6 +127,7 @@ class AirSenseSimulatorTest {
     // ==================== 多航班支持 ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-AIRSENSE-003：多航班一次上报")
     @Test
     void multipleAlertsInOneEvent() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -143,11 +145,10 @@ class AirSenseSimulatorTest {
         assertTrue(result.success());
         assertEquals(2, result.count());
 
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
 
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        JsonNode node = objectMapper.readTree(captor.getValue());
 
         assertEquals(2, node.path("data").size());
         assertEquals("B-5931", node.path("data").get(0).path("icao").asText());
@@ -156,6 +157,7 @@ class AirSenseSimulatorTest {
 
     // ==================== 拒绝场景 ====================
 
+    @DisplayName("TC-AIRSENSE-004：空列表拒绝")
     @Test
     void rejectEmptyAlerts() {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -166,9 +168,10 @@ class AirSenseSimulatorTest {
         TriggerResult result = simulator.trigger(List.of());
         assertFalse(result.success());
         assertEquals("INVALID_ALERTS", result.code());
-        Mockito.verify(mqtt, Mockito.never()).publishJson(Mockito.anyString(), Mockito.any());
+        Mockito.verify(mqtt, Mockito.never()).publish(Mockito.anyString(), Mockito.any());
     }
 
+    @DisplayName("TC-AIRSENSE-004：空列表拒绝（null）")
     @Test
     void rejectNullAlerts() {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -181,6 +184,7 @@ class AirSenseSimulatorTest {
         assertEquals("INVALID_ALERTS", result.code());
     }
 
+    @DisplayName("TC-AIRSENSE-005：MQTT 未连接拒绝")
     @Test
     void rejectWhenMqttNotConnected() {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -191,6 +195,6 @@ class AirSenseSimulatorTest {
         TriggerResult result = simulator.trigger(List.of(sampleAlert()));
         assertFalse(result.success());
         assertEquals("MQTT_NOT_CONNECTED", result.code());
-        Mockito.verify(mqtt, Mockito.never()).publishJson(Mockito.anyString(), Mockito.any());
+        Mockito.verify(mqtt, Mockito.never()).publish(Mockito.anyString(), Mockito.any());
     }
 }

@@ -16,6 +16,12 @@
 package ltd.cdmi.hivemind.simulator.handler;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import ltd.cdmi.dji.cloudapi.sdk.codec.MessageCodec;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.log.FileUploadListRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.log.FileUploadStartRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.log.FileUploadUpdateRequest;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.envelope.EventEnvelope;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.EventMethod;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticCode;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticLogRecorder;
@@ -158,20 +164,20 @@ public class RemoteLogSimulator {
 
         // 解析文件列表
         currentUploadFiles.clear();
-        JsonNode filesNode = data.path("params").path("files");
-        if (filesNode.isArray()) {
-            for (JsonNode fileNode : filesNode) {
-                String module = fileNode.path("module").asText();
-                String objectKey = fileNode.path("object_key").asText();
-                JsonNode listNode = fileNode.path("list");
-                if (listNode.isArray()) {
-                    for (JsonNode bootNode : listNode) {
-                        int bootIndex = bootNode.path("boot_index").asInt();
+        var req = MessageCodec.fromJson(data.toString(), FileUploadStartRequest.class);
+        FileUploadStartRequest.FileUploadParams params = req.params();
+        if (params != null && params.files() != null) {
+            for (FileUploadStartRequest.FileUploadFile file : params.files()) {
+                String module = file.module();
+                String objectKey = file.objectKey();
+                if (file.list() != null) {
+                    for (FileUploadStartRequest.FileUploadFile.FileUploadBoot boot : file.list()) {
+                        int bootIndex = boot.bootIndex();
                         Map<String, Object> fileInfo = new LinkedHashMap<>();
                         fileInfo.put("module", module);
                         fileInfo.put("object_key", objectKey);
                         fileInfo.put("boot_index", bootIndex);
-                        fileInfo.put("device_sn", module.equals("0") ? runtimeConfig.getDroneSn() : runtimeConfig.getDockSn());
+                        fileInfo.put("device_sn", "0".equals(module) ? runtimeConfig.getDroneSn() : runtimeConfig.getDockSn());
                         fileInfo.put("key", objectKey + "/boot_" + bootIndex + ".log");
                         fileInfo.put("fingerprint", generateMd5(objectKey + bootIndex));
                         fileInfo.put("size", 155232);  // 默认文件大小
@@ -191,7 +197,8 @@ public class RemoteLogSimulator {
 
     /** fileupload_update：处理上传状态更新（取消），返回 result=0 */
     private Map<String, Object> handleFileUploadUpdate(JsonNode data) {
-        String status = data.path("status").asText();
+        var req = MessageCodec.fromJson(data.toString(), FileUploadUpdateRequest.class);
+        String status = req.status();
         if ("cancel".equals(status)) {
             cancelUploadTask();
             currentUploadFiles.clear();
@@ -216,12 +223,11 @@ public class RemoteLogSimulator {
      */
     private Map<String, Object> handleFileUploadList(JsonNode data) {
         // 解析 module_list 过滤条件，为空时默认返回全部模块
+        var req = MessageCodec.fromJson(data.toString(), FileUploadListRequest.class);
         List<String> requestedModules = new ArrayList<>();
-        JsonNode moduleListNode = data.path("module_list");
-        if (moduleListNode.isArray() && !moduleListNode.isEmpty()) {
-            for (JsonNode m : moduleListNode) {
-                requestedModules.add(m.asText());
-            }
+        List<String> moduleList = req.moduleList();
+        if (moduleList != null && !moduleList.isEmpty()) {
+            requestedModules.addAll(moduleList);
         } else {
             requestedModules.add("0");
             requestedModules.add("3");
@@ -349,7 +355,7 @@ public class RemoteLogSimulator {
             data.put("result", 0);
             data.put("output", output);
 
-            publishEvent("fileupload_progress", data);
+            publishEvent(EventMethod.FILEUPLOAD_PROGRESS, data);
             log.info("fileupload_progress 已上报: status={}, percent={}", status, percent);
         } catch (Exception e) {
             log.error("fileupload_progress 上报失败", e);
@@ -374,18 +380,15 @@ public class RemoteLogSimulator {
         return TriggerResult.ok();
     }
 
-    private void publishEvent(String method, Map<String, Object> data) {
-        Map<String, Object> envelope = new LinkedHashMap<>();
-        envelope.put("bid", UUID.randomUUID().toString());
-        envelope.put("tid", UUID.randomUUID().toString());
-        envelope.put("timestamp", System.currentTimeMillis());
-        envelope.put("need_reply", 0);
-        envelope.put("gateway", runtimeConfig.getDockSn());
-        envelope.put("method", method);
-        envelope.put("data", data);
+    private void publishEvent(EventMethod method, Map<String, Object> data) {
+        EventEnvelope envelope = EventEnvelope.of(
+                UUID.randomUUID().toString(),
+                UUID.randomUUID().toString(),
+                System.currentTimeMillis(),
+                method, data, runtimeConfig.getDockSn());
 
         String topic = dockTopicSchema.topic(dockTopicSchema.events(), runtimeConfig.getDockSn());
-        mqtt.publishJson(topic, envelope);
+        mqtt.publish(topic, MessageCodec.toJson(envelope));
     }
 
     /** 生成简单 MD5 指纹（模拟） */

@@ -19,6 +19,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -51,6 +52,7 @@ class HivemindWsClientTest {
 
     // ==================== TC-WS-002：未配置 url 时 connect 跳过 ====================
 
+    @DisplayName("TC-WS-002：WebSocket 未配置时 connect 跳过")
     @Test
     void connectSkipsWhenWsUrlNotConfigured() {
         when(runtimeConfig.getHivemindWsUrl()).thenReturn("");
@@ -61,6 +63,7 @@ class HivemindWsClientTest {
         assertFalse(client.isConnected());
     }
 
+    @DisplayName("TC-WS-002：WebSocket url 为 null 时 connect 跳过")
     @Test
     void connectSkipsWhenWsUrlIsNull() {
         when(runtimeConfig.getHivemindWsUrl()).thenReturn(null);
@@ -73,6 +76,7 @@ class HivemindWsClientTest {
 
     // ==================== TC-WS-003：biz_code 分发到对应 Handler ====================
 
+    @DisplayName("TC-WS-003：biz_code 分发到对应 Handler")
     @Test
     void dispatchMessageRoutesToRegisteredHandler() {
         HivemindWsClient client = new HivemindWsClient(runtimeConfig, objectMapper, List.of(mapElementHandler));
@@ -89,6 +93,7 @@ class HivemindWsClientTest {
         verify(mapElementHandler).handle(any(JsonNode.class));
     }
 
+    @DisplayName("TC-WS-003：未注册 biz_code 不分发")
     @Test
     void dispatchMessageDoesNotRouteUnregisteredBizCode() {
         HivemindWsClient client = new HivemindWsClient(runtimeConfig, objectMapper, List.of(mapElementHandler));
@@ -106,6 +111,7 @@ class HivemindWsClientTest {
         verify(mapElementHandler, never()).handle(any());
     }
 
+    @DisplayName("TC-WS-003：缺失 biz_code 不分发")
     @Test
     void dispatchMessageDoesNotRouteWhenBizCodeMissing() {
         HivemindWsClient client = new HivemindWsClient(runtimeConfig, objectMapper, List.of(mapElementHandler));
@@ -121,6 +127,7 @@ class HivemindWsClientTest {
         verify(mapElementHandler, never()).handle(any());
     }
 
+    @DisplayName("补充测试：无效 JSON 不抛异常")
     @Test
     void dispatchMessageDoesNotThrowOnInvalidJson() {
         HivemindWsClient client = new HivemindWsClient(runtimeConfig, objectMapper, List.of(mapElementHandler));
@@ -130,6 +137,7 @@ class HivemindWsClientTest {
         verify(mapElementHandler, never()).handle(any());
     }
 
+    @DisplayName("TC-WS-003：多 Handler 注册时正确路由")
     @Test
     void dispatchMessageRoutesToCorrectHandlerWhenMultipleRegistered() {
         WsMessageHandler tsaHandler = Mockito.mock(WsMessageHandler.class);
@@ -154,6 +162,7 @@ class HivemindWsClientTest {
 
     // ==================== 构造与状态 ====================
 
+    @DisplayName("补充测试：disconnect 设置连接状态为 false")
     @Test
     void disconnectSetsConnectedFalse() {
         when(runtimeConfig.getHivemindWsUrl()).thenReturn("");
@@ -167,6 +176,7 @@ class HivemindWsClientTest {
         assertFalse(client.isConnected());
     }
 
+    @DisplayName("补充测试：空 Handler 列表构造不抛异常")
     @Test
     void constructorWithEmptyHandlersDoesNotThrow() {
         HivemindWsClient client = new HivemindWsClient(runtimeConfig, objectMapper, List.of());

@@ -15,6 +15,8 @@
 
 package ltd.cdmi.hivemind.simulator.mqtt;
 
+import ltd.cdmi.dji.cloudapi.sdk.protocol.topic.TopicTemplate;
+
 /**
  * DJI Cloud API MQTT Topic 模式接口。
  * <p>Pilot 上云（RC 作为网关）和机场上云（机场作为网关）的 Topic 结构分离：
@@ -23,7 +25,7 @@ package ltd.cdmi.hivemind.simulator.mqtt;
  * 机场上云用 sys/product/{sn}/status，Pilot 上云其他机型用 sys/product/{sn}/status，
  * DJI RC Plus 2 行业版用 thing/product/{sn}/status。</p>
  * <p>共同点：其他通道（osd/state/services/...）统一为 thing/product/{sn}/...，
- * 由默认方法提供。</p>
+ * 由默认方法提供，模板取自 SDK {@link TopicTemplate} 常量。</p>
  * <p>topic 命名规则见 DJI Cloud API 基础概念文档。</p>
  */
 public interface TopicSchema {
@@ -37,42 +39,43 @@ public interface TopicSchema {
     String statusReply();
 
     // ==================== 共同点：默认实现（thing/product/{sn}/...） ====================
+    // 模板统一取自 SDK TopicTemplate 常量，保证 topic 格式与 SDK 定义一致
 
     /** OSD 遥测数据上行 */
-    default String osd() { return "thing/product/%s/osd"; }
+    default String osd() { return TopicTemplate.OSD; }
 
     /** DRC 上行通道（设备→云，DRC 模式下的实时状态推送） */
-    default String drcUp() { return "thing/product/%s/drc/up"; }
+    default String drcUp() { return TopicTemplate.DRC_UP; }
 
     /** DRC 下行通道（云→设备，DRC 模式下的实时控制指令） */
-    default String drcDown() { return "thing/product/%s/drc/down"; }
+    default String drcDown() { return TopicTemplate.DRC_DOWN; }
 
     /** 状态变化上行（state） */
-    default String state() { return "thing/product/%s/state"; }
+    default String state() { return TopicTemplate.STATE; }
 
     /** 事件上行（events） */
-    default String events() { return "thing/product/%s/events"; }
+    default String events() { return TopicTemplate.EVENTS; }
 
     /** 请求上行（requests，设备主动向云请求，如 config/storage_config_get） */
-    default String requests() { return "thing/product/%s/requests"; }
+    default String requests() { return TopicTemplate.REQUESTS; }
 
     /** 服务调用下行（services） */
-    default String services() { return "thing/product/%s/services"; }
+    default String services() { return TopicTemplate.SERVICES; }
 
     /** 属性设置下行（property/set） */
-    default String propertySet() { return "thing/product/%s/property/set"; }
+    default String propertySet() { return TopicTemplate.PROPERTY_SET; }
 
     /** 服务调用回复：设备→云，应答 services */
-    default String servicesReply() { return "thing/product/%s/services_reply"; }
+    default String servicesReply() { return TopicTemplate.SERVICES_REPLY; }
 
     /** 事件回复：云→设备，应答 events */
-    default String eventsReply() { return "thing/product/%s/events_reply"; }
+    default String eventsReply() { return TopicTemplate.EVENTS_REPLY; }
 
     /** 请求回复：云→设备，应答 requests */
-    default String requestsReply() { return "thing/product/%s/requests_reply"; }
+    default String requestsReply() { return TopicTemplate.REQUESTS_REPLY; }
 
     /** 属性设置回复：设备→云，应答 property/set */
-    default String propertySetReply() { return "thing/product/%s/property/set_reply"; }
+    default String propertySetReply() { return TopicTemplate.PROPERTY_SET_REPLY; }
 
     // ==================== 工具方法 ====================
 

@@ -17,6 +17,7 @@ package ltd.cdmi.hivemind.simulator.ws.handler;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import ltd.cdmi.dji.cloudapi.sdk.websocket.WsBizCode;
 import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
 import ltd.cdmi.hivemind.simulator.http.HivemindHttpClient;
 import ltd.cdmi.hivemind.simulator.http.api.MapElementApi;
@@ -57,10 +58,10 @@ public class MapElementWsHandler implements WsMessageHandler {
     private static final Logger log = LoggerFactory.getLogger(MapElementWsHandler.class);
 
     private static final Set<String> BIZ_CODES = Set.of(
-            "map_element_create",
-            "map_element_update",
-            "map_element_delete",
-            "map_group_refresh"
+            WsBizCode.MAP_ELEMENT_CREATE.code(),
+            WsBizCode.MAP_ELEMENT_UPDATE.code(),
+            WsBizCode.MAP_ELEMENT_DELETE.code(),
+            WsBizCode.MAP_GROUP_REFRESH.code()
     );
 
     private static final int DEFAULT_MAX_LOG_SIZE = 2000;
@@ -93,7 +94,7 @@ public class MapElementWsHandler implements WsMessageHandler {
         JsonNode data = message.path("data");
 
         // map_group_refresh 触发 HTTP 拉取图层元素列表
-        if ("map_group_refresh".equals(bizCode)) {
+        if (WsBizCode.MAP_GROUP_REFRESH.code().equals(bizCode)) {
             handleGroupRefresh(data);
         }
 
@@ -132,7 +133,7 @@ public class MapElementWsHandler implements WsMessageHandler {
         entry.put("time", LocalDateTime.now().format(TIME_FMT));
         entry.put("biz_code", bizCode);
 
-        if ("map_group_refresh".equals(bizCode)) {
+        if (WsBizCode.MAP_GROUP_REFRESH.code().equals(bizCode)) {
             // map_group_refresh 的 data 结构: {ids: [group_id1, group_id2]}
             JsonNode ids = data.path("ids");
             StringBuilder sb = new StringBuilder();

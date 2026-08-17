@@ -20,7 +20,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
 import ltd.cdmi.hivemind.simulator.device.DeviceState;
-import ltd.cdmi.hivemind.simulator.device.DeviceType;
+import ltd.cdmi.dji.cloudapi.sdk.model.DockModel;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticCode;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticLogRecorder;
 import ltd.cdmi.hivemind.simulator.handler.MediaUploadSimulator;
@@ -28,6 +28,7 @@ import ltd.cdmi.hivemind.simulator.handler.ServiceCommandHandler;
 import ltd.cdmi.hivemind.simulator.handler.WaylineTaskSimulator;
 import ltd.cdmi.hivemind.simulator.mqtt.DockTopicSchema;
 import ltd.cdmi.hivemind.simulator.mqtt.MqttClientManager;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
@@ -57,12 +58,13 @@ class WaylineTaskSimulatorTest {
                 new SimulatorProperties.Media("", false, 0, false, 0),
                 null,
                 null,
+                null,
                 null
         );
     }
 
     /** 创建指定 Dock 类型的 RuntimeConfig mock */
-    private RuntimeConfig runtimeConfig(DeviceType dockType) {
+    private RuntimeConfig runtimeConfig(DockModel dockType) {
         RuntimeConfig rc = Mockito.mock(RuntimeConfig.class);
         Mockito.when(rc.getDockType()).thenReturn(dockType);
         Mockito.when(rc.getDockSn()).thenReturn("DOCK3-SN");
@@ -90,6 +92,7 @@ class WaylineTaskSimulatorTest {
     // ==================== flighttask_progress 事件结构 ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-WAYLINE-006：flighttask_progress 事件结构")
     @Test
     void publishProgressContainsCorrectStructure() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -100,7 +103,7 @@ class WaylineTaskSimulatorTest {
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                 testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
 
         // 用反射设置当前任务 ID
         Field flightIdField = WaylineTaskSimulator.class.getDeclaredField("currentFlightId");
@@ -114,13 +117,11 @@ class WaylineTaskSimulatorTest {
         // stepIndex=2 → Dock3 current_step=stepSequence()[2]=26, percent=60（传入参数）
         simulator.publishProgress("in_progress", 2, 60);
 
-        // 捕获 mqtt.publishJson 的参数
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
+        // 捕获 mqtt.publish 的参数
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
 
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        String json = objectMapper.writeValueAsString(envelope);
-        JsonNode node = objectMapper.readTree(json);
+        JsonNode node = objectMapper.readTree(captor.getValue());
 
         // 顶层结构
         assertEquals("flighttask_progress", node.path("method").asText());
@@ -156,6 +157,7 @@ class WaylineTaskSimulatorTest {
     }
 
     @SuppressWarnings("unchecked")
+    @DisplayName("补充测试：break_point 结构（paused 状态触发）")
     @Test
     void publishProgressWithBreakPoint() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -166,16 +168,15 @@ class WaylineTaskSimulatorTest {
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                 testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
 
         // paused 状态应触发 break_point
         simulator.publishProgress("paused", 2, 60);
 
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
 
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        JsonNode node = objectMapper.readTree(captor.getValue());
 
         JsonNode ext = node.path("data").path("output").path("ext");
         JsonNode breakPoint = ext.path("break_point");
@@ -192,6 +193,7 @@ class WaylineTaskSimulatorTest {
     }
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-WAYLINE-007：flighttask_progress status 枚举")
     @Test
     void publishProgressWithOkStatus() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -202,16 +204,15 @@ class WaylineTaskSimulatorTest {
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                 testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
 
         // stepIndex=5 → Dock3 current_step=stepSequence()[5]=35（最后一步）
         simulator.publishProgress("ok", 5, 100);
 
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
 
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        JsonNode node = objectMapper.readTree(captor.getValue());
 
         assertEquals("ok", node.path("data").path("output").path("status").asText());
         assertEquals(35, node.path("data").path("output").path("progress").path("current_step").asInt()); // Dock3 stepSequence[5]=35
@@ -226,6 +227,7 @@ class WaylineTaskSimulatorTest {
      * 两者 step 值不同但语义相同（Dock2/3 因多 2 个前置步骤导致偏移）。
      */
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-WAYLINE-012：current_step 步骤编号 Dock1 vs Dock2/3 不同")
     @Test
     void currentStepVersionDifferenceDock1VsDock3() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -236,22 +238,22 @@ class WaylineTaskSimulatorTest {
         MqttClientManager mqtt1 = Mockito.mock(MqttClientManager.class);
         WaylineTaskSimulator sim1 = new WaylineTaskSimulator(
                 testProps(), mqtt1, new DeviceState(), objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK1), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK1), diagnosticRecorder(), new DockTopicSchema());
         sim1.publishProgress("in_progress", 2, 60);
-        ArgumentCaptor<Object> captor1 = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt1).publishJson(Mockito.anyString(), captor1.capture());
-        JsonNode node1 = objectMapper.readTree(objectMapper.writeValueAsString(captor1.getValue()));
+        ArgumentCaptor<String> captor1 = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt1).publish(Mockito.anyString(), captor1.capture());
+        JsonNode node1 = objectMapper.readTree(captor1.getValue());
         assertEquals(24, node1.path("data").path("output").path("progress").path("current_step").asInt()); // Dock1 stepSequence[2]=24
 
         // Dock3: stepIndex=2 → current_step=26（进入返航检查）
         MqttClientManager mqtt3 = Mockito.mock(MqttClientManager.class);
         WaylineTaskSimulator sim3 = new WaylineTaskSimulator(
                 testProps(), mqtt3, new DeviceState(), objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
         sim3.publishProgress("in_progress", 2, 60);
-        ArgumentCaptor<Object> captor3 = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt3).publishJson(Mockito.anyString(), captor3.capture());
-        JsonNode node3 = objectMapper.readTree(objectMapper.writeValueAsString(captor3.getValue()));
+        ArgumentCaptor<String> captor3 = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt3).publish(Mockito.anyString(), captor3.capture());
+        JsonNode node3 = objectMapper.readTree(captor3.getValue());
         assertEquals(26, node3.path("data").path("output").path("progress").path("current_step").asInt()); // Dock3 stepSequence[2]=26
     }
 
@@ -266,6 +268,7 @@ class WaylineTaskSimulatorTest {
      * </ul>
      * 核实依据：[Dock1/Dock2/Dock3 wayline.html] break_reason 枚举对比
      */
+    @DisplayName("TC-WAYLINE-012b：break_reason 型号校验")
     @Test
     void breakReasonValidationByDockType() {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -277,25 +280,25 @@ class WaylineTaskSimulatorTest {
         MqttClientManager mqtt1 = Mockito.mock(MqttClientManager.class);
         WaylineTaskSimulator sim1 = new WaylineTaskSimulator(
                 testProps(), mqtt1, new DeviceState(), objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK1), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK1), diagnosticRecorder(), new DockTopicSchema());
         assertTrue(sim1.publishProgressFailedWithBreakReason(528));
-        Mockito.verify(mqtt1).publishJson(Mockito.anyString(), Mockito.any());
+        Mockito.verify(mqtt1).publish(Mockito.anyString(), Mockito.any());
 
         // Dock2 拒绝 528
         MqttClientManager mqtt2 = Mockito.mock(MqttClientManager.class);
         WaylineTaskSimulator sim2 = new WaylineTaskSimulator(
                 testProps(), mqtt2, new DeviceState(), objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK2), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK2), diagnosticRecorder(), new DockTopicSchema());
         assertFalse(sim2.publishProgressFailedWithBreakReason(528));
-        Mockito.verify(mqtt2, Mockito.never()).publishJson(Mockito.anyString(), Mockito.any());
+        Mockito.verify(mqtt2, Mockito.never()).publish(Mockito.anyString(), Mockito.any());
 
         // Dock3 拒绝 528
         MqttClientManager mqtt3 = Mockito.mock(MqttClientManager.class);
         WaylineTaskSimulator sim3 = new WaylineTaskSimulator(
                 testProps(), mqtt3, new DeviceState(), objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
         assertFalse(sim3.publishProgressFailedWithBreakReason(528));
-        Mockito.verify(mqtt3, Mockito.never()).publishJson(Mockito.anyString(), Mockito.any());
+        Mockito.verify(mqtt3, Mockito.never()).publish(Mockito.anyString(), Mockito.any());
 
         // --- 529=有障碍物或者禁飞区域（仅 Dock2）---
         // Dock1 拒绝 529
@@ -303,7 +306,7 @@ class WaylineTaskSimulatorTest {
 
         // Dock2 接受 529
         assertTrue(sim2.publishProgressFailedWithBreakReason(529));
-        Mockito.verify(mqtt2, Mockito.times(1)).publishJson(Mockito.anyString(), Mockito.any());
+        Mockito.verify(mqtt2, Mockito.times(1)).publish(Mockito.anyString(), Mockito.any());
 
         // Dock3 拒绝 529
         assertFalse(sim3.publishProgressFailedWithBreakReason(529));
@@ -317,11 +320,12 @@ class WaylineTaskSimulatorTest {
 
         // Dock3 接受 1565（之前错误排除，已修正）
         assertTrue(sim3.publishProgressFailedWithBreakReason(1565));
-        Mockito.verify(mqtt3).publishJson(Mockito.anyString(), Mockito.any());
+        Mockito.verify(mqtt3).publish(Mockito.anyString(), Mockito.any());
     }
 
     // ==================== TC-WAYLINE-013：flighttask_stop 仅 Dock2/3 支持 ====================
 
+    @DisplayName("TC-WAYLINE-013：flighttask_stop 仅 Dock2/3 支持")
     @Test
     void flighttaskStopRejectedOnDock1() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -332,7 +336,7 @@ class WaylineTaskSimulatorTest {
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                 testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK1), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK1), diagnosticRecorder(), new DockTopicSchema());
 
         Map<String, Object> result = invokeCommand(simulator, "flighttask_stop", null);
 
@@ -340,6 +344,7 @@ class WaylineTaskSimulatorTest {
         assertEquals(1, result.get("result"));
     }
 
+    @DisplayName("TC-WAYLINE-013：flighttask_stop 仅 Dock2/3 支持")
     @Test
     void flighttaskStopAcceptedOnDock3() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -350,7 +355,7 @@ class WaylineTaskSimulatorTest {
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                 testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
 
         Map<String, Object> result = invokeCommand(simulator, "flighttask_stop", null);
 
@@ -360,6 +365,7 @@ class WaylineTaskSimulatorTest {
 
     // ==================== TC-WAYLINE-014：return_specific_home 仅 Dock2/3 支持 ====================
 
+    @DisplayName("TC-WAYLINE-014：return_specific_home 仅 Dock2/3 支持")
     @Test
     void returnSpecificHomeRejectedOnDock1() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -370,7 +376,7 @@ class WaylineTaskSimulatorTest {
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                 testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK1), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK1), diagnosticRecorder(), new DockTopicSchema());
 
         Map<String, Object> result = invokeCommand(simulator, "return_specific_home", null);
 
@@ -378,6 +384,7 @@ class WaylineTaskSimulatorTest {
         assertEquals(1, result.get("result"));
     }
 
+    @DisplayName("TC-WAYLINE-014：return_specific_home 仅 Dock2/3 支持")
     @Test
     void returnSpecificHomeAcceptedOnDock2() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -388,7 +395,7 @@ class WaylineTaskSimulatorTest {
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                 testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK2), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK2), diagnosticRecorder(), new DockTopicSchema());
 
         Map<String, Object> result = invokeCommand(simulator, "return_specific_home", null);
 
@@ -398,6 +405,7 @@ class WaylineTaskSimulatorTest {
 
     // ==================== TC-WAYLINE-015：flight_setup_abort 仅 Dock1 支持 ====================
 
+    @DisplayName("TC-WAYLINE-015：flight_setup_abort 仅 Dock1 支持")
     @Test
     void flightSetupAbortAcceptedOnDock1() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -408,7 +416,7 @@ class WaylineTaskSimulatorTest {
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                 testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK1), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK1), diagnosticRecorder(), new DockTopicSchema());
 
         Map<String, Object> result = invokeCommand(simulator, "flight_setup_abort", null);
 
@@ -416,6 +424,7 @@ class WaylineTaskSimulatorTest {
         assertEquals(0, result.get("result"));
     }
 
+    @DisplayName("TC-WAYLINE-015：flight_setup_abort 仅 Dock1 支持")
     @Test
     void flightSetupAbortRejectedOnDock2() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -426,7 +435,7 @@ class WaylineTaskSimulatorTest {
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                 testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK2), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK2), diagnosticRecorder(), new DockTopicSchema());
 
         Map<String, Object> result = invokeCommand(simulator, "flight_setup_abort", null);
 
@@ -434,6 +443,7 @@ class WaylineTaskSimulatorTest {
         assertEquals(1, result.get("result"));
     }
 
+    @DisplayName("TC-WAYLINE-015：flight_setup_abort 仅 Dock1 支持")
     @Test
     void flightSetupAbortRejectedOnDock3() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -444,7 +454,7 @@ class WaylineTaskSimulatorTest {
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                 testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
 
         Map<String, Object> result = invokeCommand(simulator, "flight_setup_abort", null);
 
@@ -454,6 +464,7 @@ class WaylineTaskSimulatorTest {
 
     // ==================== 通用命令不受 Dock 类型限制 ====================
 
+    @DisplayName("TC-WAYLINE-021：flighttask_undo vs flighttask_stop 语义区分")
     @Test
     void commonCommandsAcceptedOnAllDocks() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -463,14 +474,14 @@ class WaylineTaskSimulatorTest {
         MediaUploadSimulator mediaUpload = Mockito.mock(MediaUploadSimulator.class);
 
         // flighttask_undo 在所有 Dock 上都支持
-        for (DeviceType dockType : new DeviceType[]{DeviceType.DOCK1, DeviceType.DOCK2, DeviceType.DOCK3}) {
+        for (DockModel dockType : new DockModel[]{DockModel.DOCK1, DockModel.DOCK2, DockModel.DOCK3}) {
             WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                     testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
                     runtimeConfig(dockType), diagnosticRecorder(), new DockTopicSchema());
 
             Map<String, Object> result = invokeCommand(simulator, "flighttask_undo", null);
             assertEquals(0, result.get("result"),
-                    "flighttask_undo 应在 " + dockType.getShortName() + " 上返回 result=0");
+                    "flighttask_undo 应在 " + dockType.shortName() + " 上返回 result=0");
         }
     }
 
@@ -482,6 +493,7 @@ class WaylineTaskSimulatorTest {
      * <p>核实依据：[Dock1 wayline.html 取消准备中的任务](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock1/wayline.html)
      * 返回码 326109 原文</p>
      */
+    @DisplayName("TC-WAYLINE-022：飞行中取消任务返回 326109 拒绝")
     @Test
     void flighttaskStopInFlightReturns326109() throws Exception {
         // TC-WAYLINE-022: 飞行中（mode_code ∈ {3-12}）取消任务返回 326109
@@ -496,7 +508,7 @@ class WaylineTaskSimulatorTest {
 
             WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                     testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                    runtimeConfig(DeviceType.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+                    runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
 
             Map<String, Object> result = invokeCommand(simulator, "flighttask_stop", null);
 
@@ -515,6 +527,7 @@ class WaylineTaskSimulatorTest {
      * <p>核实依据：[Dock1 wayline.html 取消准备中的任务](https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock1/wayline.html)
      * 返回码 326108 原文</p>
      */
+    @DisplayName("TC-WAYLINE-023：异常态取消任务返回 326108 拒绝")
     @Test
     void flighttaskStopAbnormalStateReturns326108() throws Exception {
         // TC-WAYLINE-023: 异常态（mode_code ∈ {13, 14}）取消任务返回 326108
@@ -529,7 +542,7 @@ class WaylineTaskSimulatorTest {
 
             WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                     testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                    runtimeConfig(DeviceType.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+                    runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
 
             Map<String, Object> result = invokeCommand(simulator, "flighttask_stop", null);
 
@@ -548,6 +561,7 @@ class WaylineTaskSimulatorTest {
      * 而非 props.location()（yml 静态配置）。
      */
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-LOC-004：return_home_info 使用机场位置")
     @Test
     void returnHomeInfoUsesRuntimeConfigLocation() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -558,7 +572,7 @@ class WaylineTaskSimulatorTest {
 
         // 使用自定义位置（非 yml 默认值）验证取自 runtimeConfig
         RuntimeConfig rc = Mockito.mock(RuntimeConfig.class);
-        Mockito.when(rc.getDockType()).thenReturn(DeviceType.DOCK3);
+        Mockito.when(rc.getDockType()).thenReturn(DockModel.DOCK3);
         Mockito.when(rc.getDockSn()).thenReturn("DOCK3-SN");
         Mockito.when(rc.getLocationLatitude()).thenReturn(31.23);
         Mockito.when(rc.getLocationLongitude()).thenReturn(121.47);
@@ -576,11 +590,10 @@ class WaylineTaskSimulatorTest {
         m.setAccessible(true);
         m.invoke(simulator);
 
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
 
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        JsonNode node = objectMapper.readTree(captor.getValue());
 
         assertEquals("return_home_info", node.path("method").asText());
         // 返航轨迹：drone 当前位置 → (可选上升点) → 机场位置
@@ -608,6 +621,7 @@ class WaylineTaskSimulatorTest {
      * 核实依据：[Dock1 wayline.html] return_home_info Data 仅 planned_path_points / last_point_type / flight_id
      */
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-WAYLINE-016：return_home_info 蛙跳字段仅 Dock2/3")
     @Test
     void returnHomeInfoDock1NoFrogLeapFields() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -618,7 +632,7 @@ class WaylineTaskSimulatorTest {
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                 testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK1), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK1), diagnosticRecorder(), new DockTopicSchema());
 
         Field flightIdField = WaylineTaskSimulator.class.getDeclaredField("currentFlightId");
         flightIdField.setAccessible(true);
@@ -628,11 +642,10 @@ class WaylineTaskSimulatorTest {
         m.setAccessible(true);
         m.invoke(simulator);
 
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
 
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        JsonNode node = objectMapper.readTree(captor.getValue());
 
         assertEquals("return_home_info", node.path("method").asText());
         // Dock1 仅有 planned_path_points / last_point_type / flight_id
@@ -648,6 +661,7 @@ class WaylineTaskSimulatorTest {
      * flighttask_prepare 提取 rth_altitude 到 state，供 return_home_info 使用。
      * DJI 文档约束：rth_altitude int, min=20, max=1500, 单位 m（相对起飞点 ALT）。
      */
+    @DisplayName("TC-WAYLINE-001：flighttask_prepare 回复 + 机场状态更新")
     @Test
     void prepareExtractsRthAltitudeToState() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -658,7 +672,7 @@ class WaylineTaskSimulatorTest {
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                 testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK1), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK1), diagnosticRecorder(), new DockTopicSchema());
 
         // 默认值为 0
         assertEquals(0, state.getRthAltitude());
@@ -688,6 +702,7 @@ class WaylineTaskSimulatorTest {
      * method=flighttask_ready, data.flight_ids 为传入的任务 ID 数组。
      */
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-WAYLINE-017：flighttask_ready 事件")
     @Test
     void flighttaskReadyEventStructure() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -704,11 +719,10 @@ class WaylineTaskSimulatorTest {
 
         simulator.publishFlighttaskReady(List.of("TASK-A", "TASK-B"));
 
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
 
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        JsonNode node = objectMapper.readTree(captor.getValue());
 
         assertEquals("flighttask_ready", node.path("method").asText());
         JsonNode flightIds = node.path("data").path("flight_ids");
@@ -721,6 +735,7 @@ class WaylineTaskSimulatorTest {
     // ==================== TC-WAYLINE-020：device_exit_homing_notify 事件结构 ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-WAYLINE-018：device_exit_homing_notify 事件")
     @Test
     void deviceExitHomingNotifyEventStructure() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -731,15 +746,14 @@ class WaylineTaskSimulatorTest {
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                 testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
 
         simulator.publishDeviceExitHomingNotify(1, 3);
 
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
 
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        JsonNode node = objectMapper.readTree(captor.getValue());
 
         assertEquals("device_exit_homing_notify", node.path("method").asText());
         assertEquals(1, node.path("need_reply").asInt()); // need_reply=1
@@ -757,6 +771,7 @@ class WaylineTaskSimulatorTest {
      * flight_id 按 Example 包含（M-2 待真机验证）。
      */
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-WAYLINE-020：flight_setup_exception_notify 事件（Dock1 专有）")
     @Test
     void flightSetupExceptionNotifyEventStructure() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -765,7 +780,7 @@ class WaylineTaskSimulatorTest {
         ServiceCommandHandler commandHandler = Mockito.mock(ServiceCommandHandler.class);
         MediaUploadSimulator mediaUpload = Mockito.mock(MediaUploadSimulator.class);
         RuntimeConfig rc = Mockito.mock(RuntimeConfig.class);
-        Mockito.when(rc.getDockType()).thenReturn(DeviceType.DOCK1);
+        Mockito.when(rc.getDockType()).thenReturn(DockModel.DOCK1);
         Mockito.when(rc.getDockSn()).thenReturn("DOCK1-SN");
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
@@ -775,11 +790,10 @@ class WaylineTaskSimulatorTest {
         boolean sent = simulator.publishFlightSetupExceptionNotify("FLIGHT-EXC-001", 6, 1);
         assertTrue(sent); // Dock1 支持已发送
 
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
 
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        JsonNode node = objectMapper.readTree(captor.getValue());
 
         assertEquals("flight_setup_exception_notify", node.path("method").asText());
         assertEquals(1, node.path("need_reply").asInt()); // need_reply=1
@@ -795,6 +809,7 @@ class WaylineTaskSimulatorTest {
     /**
      * flight_setup_exception_notify 仅 Dock1 支持，Dock2/3 调用应拒绝上报（P-8 型号能力不匹配）。
      */
+    @DisplayName("TC-WAYLINE-020：flight_setup_exception_notify 事件（Dock1 专有）")
     @Test
     void flightSetupExceptionNotifyDock2Rejected() {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -805,17 +820,18 @@ class WaylineTaskSimulatorTest {
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                 testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK2), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK2), diagnosticRecorder(), new DockTopicSchema());
 
         boolean sent = simulator.publishFlightSetupExceptionNotify("FLIGHT-EXC-001", 6, 1);
 
         assertFalse(sent); // Dock2 不支持，未发送
-        Mockito.verify(mqtt, Mockito.never()).publishJson(Mockito.anyString(), Mockito.any());
+        Mockito.verify(mqtt, Mockito.never()).publish(Mockito.anyString(), Mockito.any());
     }
 
     // ==================== TC-WAYLINE-021：in_flight_wayline_progress 事件结构 ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-WAYLINE-019：in_flight_wayline_progress 事件（Dock2/3）")
     @Test
     void inFlightWaylineProgressEventStructure() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -826,18 +842,17 @@ class WaylineTaskSimulatorTest {
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                 testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
 
         simulator.publishInFlightWaylineProgress("WAYLINE-001", 50, 3, 0, 2);
 
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
 
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        JsonNode node = objectMapper.readTree(captor.getValue());
 
         assertEquals("in_flight_wayline_progress", node.path("method").asText());
-        assertEquals(0, node.path("need_reply").asInt()); // 无 need_reply
+        assertEquals(1, node.path("need_reply").asInt()); // SDK EventMethod.IN_FLIGHT_WAYLINE_PROGRESS.needReply()=1
         assertEquals("WAYLINE-001", node.path("data").path("in_flight_wayline_id").asText());
         assertEquals(50, node.path("data").path("progress").path("percent").asInt());
         assertEquals(3, node.path("data").path("status").asInt());
@@ -851,6 +866,7 @@ class WaylineTaskSimulatorTest {
      * 验证 flighttask_execute 收到 multi_dock_task 蛙跳参数时能正确解析并返回 result=0。
      * 当前仅解析记录，不用于执行逻辑。
      */
+    @DisplayName("补充测试：flighttask_execute 解析蛙跳任务参数")
     @Test
     void flighttaskExecuteParsesMultiDockTask() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -861,7 +877,7 @@ class WaylineTaskSimulatorTest {
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                 testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
 
         // 构造包含 multi_dock_task 的 flighttask_execute 请求
         String json = "{\"flight_id\": \"TEST-FLIGHT-001\", \"multi_dock_task\": {"
@@ -896,6 +912,7 @@ class WaylineTaskSimulatorTest {
      * stepIndex 3（降落）→ 机场位置, height=20
      * stepIndex 4（退出工作模式）→ 机场位置, height=0
      */
+    @DisplayName("TC-LOC-005：无人机位置随飞行步骤更新")
     @Test
     void dronePositionUpdatesByFlightStep() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -906,7 +923,7 @@ class WaylineTaskSimulatorTest {
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                 testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
 
         Method m = WaylineTaskSimulator.class.getDeclaredMethod("updateDroneStateByStepIndex", int.class);
         m.setAccessible(true);
@@ -945,6 +962,7 @@ class WaylineTaskSimulatorTest {
     /**
      * 任务完成（completeTask）后无人机位置重置为机场位置，避免前端显示残留飞行偏移。
      */
+    @DisplayName("TC-LOC-006：任务完成后无人机位置重置")
     @Test
     void dronePositionResetsOnTaskComplete() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -961,7 +979,7 @@ class WaylineTaskSimulatorTest {
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                 testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
 
         Field flightIdField = WaylineTaskSimulator.class.getDeclaredField("currentFlightId");
         flightIdField.setAccessible(true);
@@ -985,6 +1003,7 @@ class WaylineTaskSimulatorTest {
      * return_home 指令立即设置 mode_code=9（自动返航），并调度延迟任务更新位置。
      */
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-LOC-016：return_home 后无人机位置更新到机场")
     @Test
     void returnHomeSetsReturnModeImmediately() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -1002,7 +1021,7 @@ class WaylineTaskSimulatorTest {
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                 testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK3), recorder, new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK3), recorder, new DockTopicSchema());
 
         Field flightIdField = WaylineTaskSimulator.class.getDeclaredField("currentFlightId");
         flightIdField.setAccessible(true);
@@ -1028,6 +1047,7 @@ class WaylineTaskSimulatorTest {
     /**
      * 返航完成后（completeReturnHome）无人机位置更新到机场，mode_code=0, droneInDock=true。
      */
+    @DisplayName("TC-LOC-016：return_home 后无人机位置更新到机场")
     @Test
     void returnHomeCompletesWithDroneAtAirport() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -1044,7 +1064,7 @@ class WaylineTaskSimulatorTest {
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                 testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
 
         Field flightIdField = WaylineTaskSimulator.class.getDeclaredField("currentFlightId");
         flightIdField.setAccessible(true);
@@ -1065,6 +1085,7 @@ class WaylineTaskSimulatorTest {
     /**
      * return_home_cancel 取消返航延迟任务，无人机位置不变。
      */
+    @DisplayName("TC-WAYLINE-005：return_home/return_home_cancel/return_specific_home 回复")
     @Test
     void returnHomeCancelStopsPositionUpdate() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -1080,7 +1101,7 @@ class WaylineTaskSimulatorTest {
 
         WaylineTaskSimulator simulator = new WaylineTaskSimulator(
                 testProps(), mqtt, state, objectMapper, commandHandler, mediaUpload,
-                runtimeConfig(DeviceType.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+                runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
 
         // 先触发 return_home 调度延迟任务
         invokeCommand(simulator, "return_home", null);

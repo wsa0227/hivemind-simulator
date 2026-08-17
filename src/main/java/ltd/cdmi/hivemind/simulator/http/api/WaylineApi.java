@@ -15,6 +15,7 @@
 
 package ltd.cdmi.hivemind.simulator.http.api;
 
+import ltd.cdmi.dji.cloudapi.sdk.http.HttpApiPath;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticCode;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticLogRecorder;
@@ -46,8 +47,8 @@ public class WaylineApi {
 
     private static final Logger log = LoggerFactory.getLogger(WaylineApi.class);
 
-    /** 航线管理 API 路径前缀 */
-    private static final String BASE_PATH = "/wayline/api/v1/workspaces";
+    /** 航线管理 API 路径前缀（委托 SDK {@link HttpApiPath#WAYLINE_BASE_PATH}） */
+    private static final String BASE_PATH = HttpApiPath.WAYLINE_BASE_PATH;
 
     private final HivemindHttpClient httpClient;
     private final RuntimeConfig runtimeConfig;

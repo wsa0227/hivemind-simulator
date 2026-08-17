@@ -21,14 +21,16 @@ import ltd.cdmi.hivemind.simulator.config.LiveConfigStore;
 import ltd.cdmi.hivemind.simulator.config.MqttProperties;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
-import ltd.cdmi.hivemind.simulator.device.DeviceType;
+import ltd.cdmi.dji.cloudapi.sdk.model.DockModel;
+import ltd.cdmi.dji.cloudapi.sdk.model.DroneModel;
 import ltd.cdmi.hivemind.simulator.device.DockOnlineService;
-import ltd.cdmi.hivemind.simulator.handler.MediaUploader;
+import ltd.cdmi.hivemind.simulator.media.MediaUploader;
 import ltd.cdmi.hivemind.simulator.handler.MediaUploadSimulator;
 import ltd.cdmi.hivemind.simulator.handler.ServiceCommandHandler;
 import ltd.cdmi.hivemind.simulator.mqtt.DockTopicSchema;
 import ltd.cdmi.hivemind.simulator.mqtt.MqttClientManager;
 import ltd.cdmi.hivemind.simulator.mqtt.MqttClientManager.MqttMessageListener;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
@@ -55,8 +57,8 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class MediaUploadSimulatorTest {
 
-    /** RuntimeConfig 默认 dockType=DOCK3，dockSn=DeviceType.DOCK3.defaultSn() */
-    private static final String DOCK_SN = DeviceType.DOCK3.defaultSn();
+    /** RuntimeConfig 默认 dockType=DOCK3，dockSn=DockModel.DOCK3.defaultSn() */
+    private static final String DOCK_SN = DockModel.DOCK3.defaultSn();
 
     private SimulatorProperties testProps() {
         return new SimulatorProperties(
@@ -64,6 +66,7 @@ class MediaUploadSimulatorTest {
                 new SimulatorProperties.Log(2000),
                 new SimulatorProperties.Live(false, "", "", null),
                 new SimulatorProperties.Media("", false, 0, false, 0),
+                null,
                 null,
                 null,
                 null
@@ -131,23 +134,23 @@ class MediaUploadSimulatorTest {
         String eventsTopic = schema.topic(schema.events(), DOCK_SN);
         Mockito.doAnswer(invocation -> {
             String topic = invocation.getArgument(0);
-            Object obj = invocation.getArgument(1);
+            String json = invocation.getArgument(1);
             if (eventsTopic.equals(topic) && capturedListener[0] != null) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> envelope = (Map<String, Object>) obj;
-                String tid = (String) envelope.get("tid");
-                String method = (String) envelope.get("method");
+                JsonNode envelope = objectMapper.readTree(json);
+                String tid = envelope.path("tid").asText();
+                String method = envelope.path("method").asText();
                 String replyJson = String.format(
                         "{\"tid\":\"%s\",\"method\":\"%s\",\"data\":{\"result\":0}}", tid, method);
                 capturedListener[0].onMessage(eventsReplyTopic, replyJson);
             }
             return null;
-        }).when(mqtt).publishJson(Mockito.anyString(), Mockito.any());
+        }).when(mqtt).publish(Mockito.anyString(), Mockito.anyString());
     }
 
     // ==================== TC-MEDIA-001：file_upload_callback 事件结构 ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-MEDIA-001：file_upload_callback 事件结构")
     @Test
     void fileUploadCallbackContainsCorrectStructure() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -163,11 +166,10 @@ class MediaUploadSimulatorTest {
         method.setAccessible(true);
         method.invoke(simulator, "TEST-FLIGHT", "test.jpg", 0, "prefix-abc");
 
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
 
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        JsonNode node = objectMapper.readTree(captor.getValue());
 
         // 顶层结构
         assertEquals("file_upload_callback", node.path("method").asText());
@@ -186,8 +188,8 @@ class MediaUploadSimulatorTest {
         // ext 结构
         JsonNode ext = file.path("ext");
         assertEquals("TEST-FLIGHT", ext.path("flight_id").asText());
-        assertEquals(DeviceType.M4TD.modelKey(), ext.path("drone_model_key").asText());
-        assertEquals(DeviceType.M4TD.modelKey(), ext.path("payload_model_key").asText());
+        assertEquals(DroneModel.M4TD.modelKey(), ext.path("drone_model_key").asText());
+        assertEquals(DroneModel.M4TD.modelKey(), ext.path("payload_model_key").asText());
         assertTrue(ext.path("is_original").asBoolean());
 
         // metadata 结构
@@ -203,6 +205,7 @@ class MediaUploadSimulatorTest {
     // ==================== TC-MEDIA-003：object_key 拼接 object_key_prefix ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-MEDIA-003：object_key 用 object_key_prefix 构造")
     @Test
     void objectKeyContainsPrefix() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -221,11 +224,10 @@ class MediaUploadSimulatorTest {
         method.setAccessible(true);
         method.invoke(simulator, flightId, fileName, 0, prefix);
 
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
 
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        JsonNode node = objectMapper.readTree(captor.getValue());
 
         String objectKey = node.path("data").path("file").path("object_key").asText();
         // object_key 格式：{object_key_prefix}/{flight_id}/{file_name}
@@ -236,6 +238,7 @@ class MediaUploadSimulatorTest {
     // ==================== TC-MEDIA-004：highest_priority_upload_flighttask_media 事件结构 ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-MEDIA-004：highest_priority_upload_flighttask_media 事件上报")
     @Test
     void highestPriorityEventStructure() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -249,11 +252,10 @@ class MediaUploadSimulatorTest {
         method.setAccessible(true);
         method.invoke(simulator, "FLIGHT-PRIORITY");
 
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt).publishJson(Mockito.anyString(), captor.capture());
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt).publish(Mockito.anyString(), captor.capture());
 
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        JsonNode node = objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        JsonNode node = objectMapper.readTree(captor.getValue());
 
         assertEquals("highest_priority_upload_flighttask_media", node.path("method").asText());
         assertEquals(1, node.path("need_reply").asInt());
@@ -265,6 +267,7 @@ class MediaUploadSimulatorTest {
 
     // ==================== TC-MEDIA-005：upload_flighttask_media_prioritize 记录优先级 ====================
 
+    @DisplayName("TC-MEDIA-005：upload_flighttask_media_prioritize 回 result=0")
     @Test
     void prioritizeCommandRecordsFlightId() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -287,6 +290,7 @@ class MediaUploadSimulatorTest {
 
     // ==================== TC-MEDIA-006：file_upload_callback 等待 events_reply 后继续 ====================
 
+    @DisplayName("TC-MEDIA-006：file_upload_callback 上报后等待 events_reply")
     @Test
     void fileUploadCallbackWaitsForEventReply() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -313,6 +317,7 @@ class MediaUploadSimulatorTest {
 
     // ==================== TC-MEDIA-007：events_reply 超时不阻塞后续上传 ====================
 
+    @DisplayName("TC-MEDIA-007：events_reply 超时不阻塞后续上传")
     @Test
     void eventReplyTimeoutDoesNotBlockUpload() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -320,7 +325,7 @@ class MediaUploadSimulatorTest {
         DockOnlineService onlineService = Mockito.mock(DockOnlineService.class);
 
         mockStorageConfig(onlineService, objectMapper, "test-prefix");
-        // 不模拟 events_reply（publishJson 默认 no-op，future 超时）
+        // 不模拟 events_reply（publish 默认 no-op，future 超时）
 
         // 1 秒超时（4 个事件 × 1 秒 = 4 秒，验证超时不阻塞）
         MediaUploadSimulator simulator = new TestableSimulator(
@@ -336,6 +341,7 @@ class MediaUploadSimulatorTest {
 
     // ==================== TC-MEDIA-008：媒体上传完整流程时序 ====================
 
+    @DisplayName("TC-MEDIA-008：媒体上传完整流程")
     @Test
     void completeUploadFlowSequence() throws Exception {
         DockTopicSchema schema = new DockTopicSchema();
@@ -345,7 +351,7 @@ class MediaUploadSimulatorTest {
 
         mockStorageConfig(onlineService, objectMapper, "seq-prefix");
 
-        // 捕获所有 publishJson 调用的 method（用于验证时序）
+        // 捕获所有 publish 调用的 method（用于验证时序）
         List<String> publishedMethods = new ArrayList<>();
         final MqttMessageListener[] capturedListener = new MqttMessageListener[1];
         String eventsReplyTopic = schema.topic(schema.eventsReply(), DOCK_SN);
@@ -361,12 +367,11 @@ class MediaUploadSimulatorTest {
         String eventsTopic = schema.topic(schema.events(), DOCK_SN);
         Mockito.doAnswer(invocation -> {
             String topic = invocation.getArgument(0);
-            Object obj = invocation.getArgument(1);
+            String json = invocation.getArgument(1);
             if (eventsTopic.equals(topic)) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> envelope = (Map<String, Object>) obj;
-                String method = (String) envelope.get("method");
-                String tid = (String) envelope.get("tid");
+                JsonNode envelope = objectMapper.readTree(json);
+                String method = envelope.path("method").asText();
+                String tid = envelope.path("tid").asText();
                 publishedMethods.add(method);
                 // 模拟 events_reply
                 if (capturedListener[0] != null) {
@@ -376,7 +381,7 @@ class MediaUploadSimulatorTest {
                 }
             }
             return null;
-        }).when(mqtt).publishJson(Mockito.anyString(), Mockito.any());
+        }).when(mqtt).publish(Mockito.anyString(), Mockito.anyString());
 
         MediaUploadSimulator simulator = new TestableSimulator(
                 testProps(), mqtt, objectMapper, onlineService,

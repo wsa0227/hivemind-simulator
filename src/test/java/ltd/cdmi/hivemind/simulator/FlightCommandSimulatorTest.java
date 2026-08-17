@@ -19,19 +19,23 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
+import ltd.cdmi.hivemind.simulator.device.DeviceMode;
 import ltd.cdmi.hivemind.simulator.device.DeviceState;
-import ltd.cdmi.hivemind.simulator.device.DeviceType;
+import ltd.cdmi.dji.cloudapi.sdk.model.DockModel;
+import ltd.cdmi.dji.cloudapi.sdk.model.RcModel;
 import ltd.cdmi.hivemind.simulator.handler.FlightCommandSimulator;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticLogRecorder;
 import ltd.cdmi.hivemind.simulator.mqtt.DockTopicSchema;
 import ltd.cdmi.hivemind.simulator.mqtt.MqttClientManager;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
 
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.Mockito.*;
 
 /**
  * FlightCommandSimulator 单元测试。
@@ -51,17 +55,39 @@ class FlightCommandSimulatorTest {
                 new SimulatorProperties.Media("", false, 0, false, 0),
                 null,
                 null,
+                null,
                 null
         );
     }
 
-    private RuntimeConfig runtimeConfig(DeviceType dockType) {
+    private RuntimeConfig runtimeConfig(DockModel dockType) {
         RuntimeConfig rc = Mockito.mock(RuntimeConfig.class);
-        Mockito.when(rc.getDockType()).thenReturn(dockType);
-        Mockito.when(rc.getDockSn()).thenReturn("dock-sn-test");
-        Mockito.when(rc.getLocationLatitude()).thenReturn(30.67);
-        Mockito.when(rc.getLocationLongitude()).thenReturn(104.07);
-        Mockito.when(rc.getLocationHeight()).thenReturn(500.0);
+        when(rc.getDeviceMode()).thenReturn(DeviceMode.DOCK);
+        when(rc.getDockType()).thenReturn(dockType);
+        when(rc.getDockSn()).thenReturn("dock-sn-test");
+        when(rc.getGatewaySn()).thenReturn("dock-sn-test");
+        when(rc.getLocationLatitude()).thenReturn(30.67);
+        when(rc.getLocationLongitude()).thenReturn(104.07);
+        when(rc.getLocationHeight()).thenReturn(500.0);
+        return rc;
+    }
+
+    /**
+     * Pilot 模式 RuntimeConfig mock。
+     * <p>getDockType 返回非 DOCK1 的值，确保 isPoiSupported() 走 getDeviceMode()==PILOT 分支，
+     * 而非 getDockType()==DOCK1 分支（避免短路求值掩盖 Pilot 模式判断 bug）。
+     */
+    private RuntimeConfig pilotRuntimeConfig(RcModel controllerType) {
+        RuntimeConfig rc = Mockito.mock(RuntimeConfig.class);
+        when(rc.getDeviceMode()).thenReturn(DeviceMode.PILOT);
+        when(rc.getControllerType()).thenReturn(controllerType);
+        when(rc.getControllerSn()).thenReturn("rc-sn-test");
+        when(rc.getGatewaySn()).thenReturn("rc-sn-test");
+        // Pilot 模式下 getDockType 不应被 isPoiSupported() 调用（短路求值），返回 DOCK3 以验证
+        when(rc.getDockType()).thenReturn(DockModel.DOCK3);
+        when(rc.getLocationLatitude()).thenReturn(30.67);
+        when(rc.getLocationLongitude()).thenReturn(104.07);
+        when(rc.getLocationHeight()).thenReturn(500.0);
         return rc;
     }
 
@@ -69,8 +95,18 @@ class FlightCommandSimulatorTest {
         return Mockito.mock(DiagnosticLogRecorder.class);
     }
 
+    /**
+     * 捕获 mqtt.publish 的 envelope（EventEnvelope 序列化字符串）并转为 JsonNode。
+     */
+    private JsonNode capturePublishedEvent(MqttClientManager mqtt, ObjectMapper objectMapper) throws Exception {
+        ArgumentCaptor<String> payloadCaptor = ArgumentCaptor.forClass(String.class);
+        verify(mqtt).publish(anyString(), payloadCaptor.capture());
+        return objectMapper.readTree(payloadCaptor.getValue());
+    }
+
     // ==================== TC-FLY-029：Dock2/Dock3 特有字段解析 ====================
 
+    @DisplayName("TC-FLY-029：Dock3 特有字段解析（rth_mode/commander_flight_mode/flight_safety_advance_check）")
     @Test
     void dock3SpecificFieldsParsed() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -79,7 +115,7 @@ class FlightCommandSimulatorTest {
         Mockito.when(mqtt.isConnected()).thenReturn(true);
 
         FlightCommandSimulator simulator = new FlightCommandSimulator(
-                testProps(), mqtt, state, runtimeConfig(DeviceType.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+                testProps(), mqtt, state, runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
 
         // Dock3 下发含 rth_mode/commander_flight_mode/flight_safety_advance_check 的指令
         String json = """
@@ -115,6 +151,7 @@ class FlightCommandSimulatorTest {
         assertEquals(0, reply.get("result"));
     }
 
+    @DisplayName("TC-FLY-029：Dock1 缺失 Dock3 特有字段时默认为 0")
     @Test
     void dock1MissingDock3FieldsDefaultsToZero() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -123,7 +160,7 @@ class FlightCommandSimulatorTest {
         Mockito.when(mqtt.isConnected()).thenReturn(true);
 
         FlightCommandSimulator simulator = new FlightCommandSimulator(
-                testProps(), mqtt, state, runtimeConfig(DeviceType.DOCK1), diagnosticRecorder(), new DockTopicSchema());
+                testProps(), mqtt, state, runtimeConfig(DockModel.DOCK1), diagnosticRecorder(), new DockTopicSchema());
 
         // Dock1 不下发 rth_mode/commander_flight_mode/flight_safety_advance_check
         String json = """
@@ -153,6 +190,7 @@ class FlightCommandSimulatorTest {
 
     // ==================== TC-FLY-030：MQTT 消息体不泄漏内部字段 ====================
 
+    @DisplayName("TC-FLY-030：services_reply 不泄漏内部字段（rth_mode 等）")
     @Test
     void servicesReplyDoesNotLeakInternalFields() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -161,7 +199,7 @@ class FlightCommandSimulatorTest {
         Mockito.when(mqtt.isConnected()).thenReturn(true);
 
         FlightCommandSimulator simulator = new FlightCommandSimulator(
-                testProps(), mqtt, state, runtimeConfig(DeviceType.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+                testProps(), mqtt, state, runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
 
         String json = """
                 {
@@ -199,6 +237,7 @@ class FlightCommandSimulatorTest {
     /**
      * rc_lost_action=0（悬停）：mode_code=0，位置不变。
      */
+    @DisplayName("TC-FLY-028：rc_lost_action=0 悬停，mode_code=0 位置不变")
     @Test
     void rcLostHoverSetsModeCodeZero() {
         DeviceState state = new DeviceState();
@@ -215,7 +254,7 @@ class FlightCommandSimulatorTest {
         DiagnosticLogRecorder recorder = diagnosticRecorder();
 
         FlightCommandSimulator simulator = new FlightCommandSimulator(
-                testProps(), mqtt, state, runtimeConfig(DeviceType.DOCK3), recorder, new DockTopicSchema());
+                testProps(), mqtt, state, runtimeConfig(DockModel.DOCK3), recorder, new DockTopicSchema());
 
         String err = simulator.triggerRcLost();
 
@@ -224,10 +263,10 @@ class FlightCommandSimulatorTest {
         assertEquals(31.0, state.getDroneLatitude(), "位置不变");
         assertEquals(80.0, state.getDroneHeight(), "高度不变");
         // 验证发布了 joystick_invalid_notify 事件
-        Mockito.verify(mqtt).publishJson(
+        Mockito.verify(mqtt).publish(
                 Mockito.contains("/events"),
-                Mockito.argThat(arg -> arg instanceof Map &&
-                        "joystick_invalid_notify".equals(((Map<?, ?>) arg).get("method"))));
+                Mockito.argThat(arg -> arg instanceof String &&
+                        ((String) arg).contains("\"method\":\"joystick_invalid_notify\"")));
         // 悬停无推断行为，不记录 M-2
         Mockito.verify(recorder, Mockito.never()).record(Mockito.any(), Mockito.any(), Mockito.any());
     }
@@ -235,6 +274,7 @@ class FlightCommandSimulatorTest {
     /**
      * rc_lost_action=1（降落）：mode_code=12，延迟后原地降落（height=0, mode_code=0, droneInDock=false）。
      */
+    @DisplayName("TC-FLY-028：rc_lost_action=1 降落，mode_code=12 后原地降落完成")
     @Test
     void rcLostLandingCompletesInPlace() throws Exception {
         DeviceState state = new DeviceState();
@@ -251,7 +291,7 @@ class FlightCommandSimulatorTest {
         DiagnosticLogRecorder recorder = diagnosticRecorder();
 
         FlightCommandSimulator simulator = new FlightCommandSimulator(
-                testProps(), mqtt, state, runtimeConfig(DeviceType.DOCK3), recorder, new DockTopicSchema());
+                testProps(), mqtt, state, runtimeConfig(DockModel.DOCK3), recorder, new DockTopicSchema());
 
         simulator.triggerRcLost();
 
@@ -279,6 +319,7 @@ class FlightCommandSimulatorTest {
     /**
      * rc_lost_action=2（返航）：mode_code=9，延迟后归舱（位置=机场, mode_code=0, droneInDock=true）。
      */
+    @DisplayName("TC-FLY-028：rc_lost_action=2 返航，mode_code=9 后归舱完成")
     @Test
     void rcLostReturnHomeCompletesAtAirport() throws Exception {
         DeviceState state = new DeviceState();
@@ -295,7 +336,7 @@ class FlightCommandSimulatorTest {
         DiagnosticLogRecorder recorder = diagnosticRecorder();
 
         FlightCommandSimulator simulator = new FlightCommandSimulator(
-                testProps(), mqtt, state, runtimeConfig(DeviceType.DOCK3), recorder, new DockTopicSchema());
+                testProps(), mqtt, state, runtimeConfig(DockModel.DOCK3), recorder, new DockTopicSchema());
 
         simulator.triggerRcLost();
 
@@ -323,6 +364,7 @@ class FlightCommandSimulatorTest {
     /**
      * MQTT 未连接时拒绝触发失联。
      */
+    @DisplayName("TC-FLY-028：MQTT 未连接时拒绝触发遥控器失联")
     @Test
     void rcLostRejectedWhenMqttDisconnected() {
         DeviceState state = new DeviceState();
@@ -332,7 +374,7 @@ class FlightCommandSimulatorTest {
         Mockito.when(mqtt.isConnected()).thenReturn(false);
 
         FlightCommandSimulator simulator = new FlightCommandSimulator(
-                testProps(), mqtt, state, runtimeConfig(DeviceType.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+                testProps(), mqtt, state, runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
 
         String err = simulator.triggerRcLost();
 
@@ -345,6 +387,7 @@ class FlightCommandSimulatorTest {
     /**
      * Dock2/Dock3 显式下发 rth_mode=0（智能高度）→ 拒绝执行，返回 result 非 0。
      */
+    @DisplayName("TC-FLY-031：Dock2/Dock3 显式下发 rth_mode=0 拒绝执行")
     @Test
     void rthModeZeroRejected() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -354,7 +397,7 @@ class FlightCommandSimulatorTest {
         DiagnosticLogRecorder recorder = Mockito.mock(DiagnosticLogRecorder.class);
 
         FlightCommandSimulator simulator = new FlightCommandSimulator(
-                testProps(), mqtt, state, runtimeConfig(DeviceType.DOCK3), recorder, new DockTopicSchema());
+                testProps(), mqtt, state, runtimeConfig(DockModel.DOCK3), recorder, new DockTopicSchema());
 
         String json = """
                 {
@@ -397,6 +440,7 @@ class FlightCommandSimulatorTest {
     /**
      * Dock1 不下发 rth_mode 字段（isMissingNode）→ 不拒绝，正常执行。
      */
+    @DisplayName("TC-FLY-031：Dock1 缺失 rth_mode 字段不拒绝，正常执行")
     @Test
     void dock1MissingRthModeNotRejected() throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
@@ -406,7 +450,7 @@ class FlightCommandSimulatorTest {
         DiagnosticLogRecorder recorder = Mockito.mock(DiagnosticLogRecorder.class);
 
         FlightCommandSimulator simulator = new FlightCommandSimulator(
-                testProps(), mqtt, state, runtimeConfig(DeviceType.DOCK1), recorder, new DockTopicSchema());
+                testProps(), mqtt, state, runtimeConfig(DockModel.DOCK1), recorder, new DockTopicSchema());
 
         // Dock1 不下发 rth_mode 字段
         String json = """
@@ -448,7 +492,7 @@ class FlightCommandSimulatorTest {
         Mockito.when(mqtt.isConnected()).thenReturn(true);
 
         FlightCommandSimulator simulator = new FlightCommandSimulator(
-                testProps(), mqtt, state, runtimeConfig(DeviceType.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+                testProps(), mqtt, state, runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
 
         state.setDroneActivated(true);
         state.setDroneInDock(false);
@@ -484,5 +528,216 @@ class FlightCommandSimulatorTest {
         assertEquals(22.0, state.getDroneLatitude(), "fly_to_point_stop 后纬度不应更新到目标点");
         assertEquals(113.0, state.getDroneLongitude(), "fly_to_point_stop 后经度不应更新到目标点");
         assertEquals(50.0, state.getDroneElevation(), "fly_to_point_stop 后高度不应更新到目标点");
+    }
+
+    // ==================== TC-FLY-022：poi_mode_enter 指令处理（Dock1/Pilot 专属） ====================
+
+    @Test
+    @DisplayName("TC-FLY-022: poi_mode_enter Dock1 模式返回 result=0 并触发 poi_status_notify(in_progress)")
+    void poiModeEnterDock1ReturnsSuccessAndTriggersEvent() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        DeviceState state = new DeviceState();
+        MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
+        when(mqtt.isConnected()).thenReturn(true);
+
+        FlightCommandSimulator simulator = new FlightCommandSimulator(
+                testProps(), mqtt, state, runtimeConfig(DockModel.DOCK1), diagnosticRecorder(), new DockTopicSchema());
+
+        JsonNode data = objectMapper.readTree("""
+                {"latitude":12.23,"longitude":12.23,"height":100}
+                """);
+
+        Map<String, Object> reply = simulator.handlePoiModeEnter(data);
+
+        assertNotNull(reply);
+        assertEquals(0, reply.get("result"), "Dock1 poi_mode_enter 应返回 result=0");
+        assertFalse(reply.containsKey("output"), "poi_mode_enter reply 无 output");
+
+        JsonNode event = capturePublishedEvent(mqtt, objectMapper);
+        assertEquals("poi_status_notify", event.path("method").asText());
+        assertEquals("in_progress", event.path("data").path("status").asText());
+        assertEquals(0, event.path("data").path("reason").asInt());
+    }
+
+    @Test
+    @DisplayName("TC-FLY-022: poi_mode_enter Pilot 模式返回 result=0 并触发 poi_status_notify(in_progress)")
+    void poiModeEnterPilotReturnsSuccessAndTriggersEvent() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        DeviceState state = new DeviceState();
+        MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
+        when(mqtt.isConnected()).thenReturn(true);
+
+        FlightCommandSimulator simulator = new FlightCommandSimulator(
+                testProps(), mqtt, state, pilotRuntimeConfig(RcModel.RC_PLUS_2),
+                diagnosticRecorder(), new DockTopicSchema());
+
+        JsonNode data = objectMapper.readTree("""
+                {"latitude":12.23,"longitude":12.23,"height":100}
+                """);
+
+        Map<String, Object> reply = simulator.handlePoiModeEnter(data);
+
+        assertNotNull(reply);
+        assertEquals(0, reply.get("result"), "Pilot poi_mode_enter 应返回 result=0");
+
+        JsonNode event = capturePublishedEvent(mqtt, objectMapper);
+        assertEquals("poi_status_notify", event.path("method").asText());
+        assertEquals("in_progress", event.path("data").path("status").asText());
+    }
+
+    @Test
+    @DisplayName("TC-FLY-022: poi_mode_enter Dock3 模式返回 result=1（不支持 POI）")
+    void poiModeEnterDock3ReturnsRejected() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        DeviceState state = new DeviceState();
+        MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
+        when(mqtt.isConnected()).thenReturn(true);
+
+        FlightCommandSimulator simulator = new FlightCommandSimulator(
+                testProps(), mqtt, state, runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+
+        JsonNode data = objectMapper.readTree("""
+                {"latitude":12.23,"longitude":12.23,"height":100}
+                """);
+
+        Map<String, Object> reply = simulator.handlePoiModeEnter(data);
+
+        assertNotNull(reply);
+        assertEquals(1, reply.get("result"), "Dock3 poi_mode_enter 应返回 result=1（不支持）");
+        verify(mqtt, never()).publish(anyString(), any());
+    }
+
+    // ==================== TC-FLY-023：poi_mode_exit 指令处理（Dock1/Pilot 专属） ====================
+
+    @Test
+    @DisplayName("TC-FLY-023: poi_mode_exit Dock1 模式返回 result=0 并触发 poi_status_notify(ok)")
+    void poiModeExitDock1ReturnsSuccessAndTriggersEvent() throws Exception {
+        DeviceState state = new DeviceState();
+        MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
+        when(mqtt.isConnected()).thenReturn(true);
+        ObjectMapper objectMapper = new ObjectMapper();
+
+        FlightCommandSimulator simulator = new FlightCommandSimulator(
+                testProps(), mqtt, state, runtimeConfig(DockModel.DOCK1), diagnosticRecorder(), new DockTopicSchema());
+
+        Map<String, Object> reply = simulator.handlePoiModeExit();
+
+        assertNotNull(reply);
+        assertEquals(0, reply.get("result"), "Dock1 poi_mode_exit 应返回 result=0");
+        assertFalse(reply.containsKey("output"), "poi_mode_exit reply 无 output");
+
+        JsonNode event = capturePublishedEvent(mqtt, objectMapper);
+        assertEquals("poi_status_notify", event.path("method").asText());
+        assertEquals("ok", event.path("data").path("status").asText());
+        assertEquals(0, event.path("data").path("reason").asInt());
+    }
+
+    @Test
+    @DisplayName("TC-FLY-023: poi_mode_exit Pilot 模式返回 result=0 并触发 poi_status_notify(ok)")
+    void poiModeExitPilotReturnsSuccessAndTriggersEvent() throws Exception {
+        DeviceState state = new DeviceState();
+        MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
+        when(mqtt.isConnected()).thenReturn(true);
+        ObjectMapper objectMapper = new ObjectMapper();
+
+        FlightCommandSimulator simulator = new FlightCommandSimulator(
+                testProps(), mqtt, state, pilotRuntimeConfig(RcModel.RC_PLUS_2),
+                diagnosticRecorder(), new DockTopicSchema());
+
+        Map<String, Object> reply = simulator.handlePoiModeExit();
+
+        assertNotNull(reply);
+        assertEquals(0, reply.get("result"), "Pilot poi_mode_exit 应返回 result=0");
+
+        JsonNode event = capturePublishedEvent(mqtt, objectMapper);
+        assertEquals("poi_status_notify", event.path("method").asText());
+        assertEquals("ok", event.path("data").path("status").asText());
+    }
+
+    @Test
+    @DisplayName("TC-FLY-023: poi_mode_exit Dock3 模式返回 result=1（不支持 POI）")
+    void poiModeExitDock3ReturnsRejected() {
+        DeviceState state = new DeviceState();
+        MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
+        when(mqtt.isConnected()).thenReturn(true);
+
+        FlightCommandSimulator simulator = new FlightCommandSimulator(
+                testProps(), mqtt, state, runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+
+        Map<String, Object> reply = simulator.handlePoiModeExit();
+
+        assertNotNull(reply);
+        assertEquals(1, reply.get("result"), "Dock3 poi_mode_exit 应返回 result=1（不支持）");
+        verify(mqtt, never()).publish(anyString(), any());
+    }
+
+    // ==================== TC-FLY-024：poi_circle_speed_set 指令处理（Dock1/Pilot 专属） ====================
+
+    @Test
+    @DisplayName("TC-FLY-024: poi_circle_speed_set Dock1 模式返回 result=0，不触发事件")
+    void poiCircleSpeedSetDock1ReturnsSuccessNoEvent() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        DeviceState state = new DeviceState();
+        MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
+        when(mqtt.isConnected()).thenReturn(true);
+
+        FlightCommandSimulator simulator = new FlightCommandSimulator(
+                testProps(), mqtt, state, runtimeConfig(DockModel.DOCK1), diagnosticRecorder(), new DockTopicSchema());
+
+        JsonNode data = objectMapper.readTree("""
+                {"circle_speed":5.2}
+                """);
+
+        Map<String, Object> reply = simulator.handlePoiCircleSpeedSet(data);
+
+        assertNotNull(reply);
+        assertEquals(0, reply.get("result"), "Dock1 poi_circle_speed_set 应返回 result=0");
+        assertFalse(reply.containsKey("output"), "poi_circle_speed_set reply 无 output");
+        verify(mqtt, never()).publish(anyString(), any());
+    }
+
+    @Test
+    @DisplayName("TC-FLY-024: poi_circle_speed_set Pilot 模式返回 result=0，不触发事件")
+    void poiCircleSpeedSetPilotReturnsSuccessNoEvent() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        DeviceState state = new DeviceState();
+        MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
+        when(mqtt.isConnected()).thenReturn(true);
+
+        FlightCommandSimulator simulator = new FlightCommandSimulator(
+                testProps(), mqtt, state, pilotRuntimeConfig(RcModel.RC_PLUS_2),
+                diagnosticRecorder(), new DockTopicSchema());
+
+        JsonNode data = objectMapper.readTree("""
+                {"circle_speed":5.2}
+                """);
+
+        Map<String, Object> reply = simulator.handlePoiCircleSpeedSet(data);
+
+        assertNotNull(reply);
+        assertEquals(0, reply.get("result"), "Pilot poi_circle_speed_set 应返回 result=0");
+        verify(mqtt, never()).publish(anyString(), any());
+    }
+
+    @Test
+    @DisplayName("TC-FLY-024: poi_circle_speed_set Dock3 模式返回 result=1（不支持 POI）")
+    void poiCircleSpeedSetDock3ReturnsRejected() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        DeviceState state = new DeviceState();
+        MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
+        when(mqtt.isConnected()).thenReturn(true);
+
+        FlightCommandSimulator simulator = new FlightCommandSimulator(
+                testProps(), mqtt, state, runtimeConfig(DockModel.DOCK3), diagnosticRecorder(), new DockTopicSchema());
+
+        JsonNode data = objectMapper.readTree("""
+                {"circle_speed":5.2}
+                """);
+
+        Map<String, Object> reply = simulator.handlePoiCircleSpeedSet(data);
+
+        assertNotNull(reply);
+        assertEquals(1, reply.get("result"), "Dock3 poi_circle_speed_set 应返回 result=1（不支持）");
+        verify(mqtt, never()).publish(anyString(), any());
     }
 }

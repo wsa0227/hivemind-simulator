@@ -653,7 +653,9 @@ hivemind-simulator/
 │   │   └── LiveConfigStore.java               # Live 推流+媒体+机场位置配置持久化（JSON 文件）
 │   ├── mqtt/
 │   │   ├── MqttClientManager.java             # 模拟器 MQTT 连接/订阅/发布/消息日志
-│   │   ├── TopicConstants.java                # DJI topic 模板常量
+│   │   ├── TopicSchema.java                   # DJI Topic 模式接口（差异点 status/statusReply 为抽象方法，其他通道默认实现）
+│   │   ├── PilotTopicSchema.java              # Pilot 上云 Topic 模式（按遥控器型号区分 status/statusReply）
+│   │   ├── DockTopicSchema.java               # 机场上云 Topic 模式（status/statusReply 使用 sys/product/{sn}/...）
 │   │   ├── DrcMessage.java                    # DRC 消息封装（method/data/seq）
 │   │   ├── MonitorMqttClient.java             # 监控器 MQTT 客户端
 │   │   └── MonitorService.java                # 监控器消息处理
@@ -999,7 +1001,7 @@ sequenceDiagram
 | 功能 | Dock to Cloud | Pilot to Cloud | 模拟器实现 |
 |---|---|---|---|
 | 设备上线 | update_topo | update_topo | 复用（type 不同） |
-| OSD 上报 | Dock + Drone OSD | Controller + Drone OSD | 新增 ControllerOsdBuilder |
+| OSD 上报 | Dock + Drone OSD | RC + Drone OSD | 新增 RcOsdBuilder |
 | 直播 | Service Topic | Service Topic + DRC 镜头切换 | 复用 + 新增 DRC 处理 |
 | DRC 指令飞行 | MQTT | MQTT + 云控授权 | 复用 + 新增授权流程 |
 | 航线任务 | MQTT | HTTPS（本地执行） | 不模拟 |
@@ -1015,8 +1017,8 @@ sequenceDiagram
 |---|---|
 | `DeviceMode.java` | 设备模式枚举（DOCK/PILOT） |
 | `PilotOnlineService.java` | Pilot 上线流程（MQTT + update_topo） |
-| `PilotControllerOsdBuilder.java` | 遥控器 OSD 字段集 |
-| `CloudControlAuthHandler.java` | 云控授权流程 |
+| `RcPlusOsdBuilder.java` | 遥控器 OSD 字段集 |
+| `AuthFlowHandler.java` | 云控授权与 DRC 模式切换（统一处理 `cloud_control_auth_request/release` + `drc_mode_enter/exit`） |
 
 #### 修改文件
 
@@ -1040,6 +1042,7 @@ sequenceDiagram
 | RC_PLUS | 2 | 119 | 0 | M350 RTK / M300 RTK / M30 / M30T |
 | RC_PLUS_2 | 2 | 174 | 0 | M4E / M4T |
 | RC_PRO | 2 | 144 | 0 | Mavic 3E / Mavic 3T |
+| SMART_CONTROLLER_ENTERPRISE | 2 | 56 | 0 | M300 RTK |
 
 新增 Pilot 飞行器类型（domain=0）：
 
@@ -1049,6 +1052,7 @@ sequenceDiagram
 | M300_RTK | 60 | 0 | Matrice 300 RTK |
 | MAVIC_3E | 77 | 0 | Mavic 3E |
 | MAVIC_3T | 77 | 1 | Mavic 3T |
+| MAVIC_3TA | 77 | 3 | Mavic 3TA（Mavic 3T 热成像增强版） |
 | M400 | 103 | 0 | Matrice 400 |
 | M4E | 99 | 0 | DJI Matrice 4E |
 | M4T | 99 | 1 | DJI Matrice 4T |
@@ -1172,9 +1176,9 @@ sequenceDiagram
 
 | 功能 | 实现状态 | 实现方式 |
 |---|---|---|
-| MQTT 上线/OSD/State | ✅ 已实现 | PilotOnlineService + ControllerOsdBuilder |
+| MQTT 上线/OSD/State | ✅ 已实现 | PilotOnlineService + RcOsdBuilder |
 | DRC 远程控制 | ✅ 已实现 | DrcCommandHandler + DrcProtocol 策略 |
-| 云控授权 | ✅ 已实现 | CloudControlAuthHandler |
+| 云控授权 | ✅ 已实现 | AuthFlowHandler（同时处理 DRC 模式切换） |
 | 地图元素 CRUD | ✅ 已实现 | MapElementApi + MapElementSimulator |
 | 地图元素 WebSocket 推送 | ✅ 已实现 | HivemindWsClient + MapElementWsHandler |
 | 态势感知（设备拓扑 + WebSocket 推送） | ✅ 已实现 | DeviceTopoApi + SituationAwarenessWsHandler |
@@ -1270,46 +1274,75 @@ simulator/
 ```
 dji-cloud-api-sdk/
 ├── protocol/                  # 协议定义层（纯定义，无逻辑）
-│   ├── topic/                 # MQTT Topic 模板常量 + 方向（UP/DOWN）
-│   ├── method/                # Method 枚举（Service/Event/Drc/Status/Requests）
-│   ├── envelope/              # 消息封装结构（Request/Reply/Event Envelope）
-│   └── error/                 # DJI result code 常量 + err_infos 结构
+│   ├── topic/                 # MQTT Topic 模板常量 + 方向（UP/DOWN）【已落地】
+│   ├── method/                # Method 名称枚举（Status/Requests/Event/Drc/Service）【已落地】
+│   │   ├── StatusMethod        1 个（update_topo）
+│   │   ├── RequestsMethod      7 个（config/airport_bind_status/airport_organization_get/airport_organization_bind/storage_config_get/flighttask_progress_get/flight_areas_get）
+│   │   ├── EventMethod         20 个（flighttask_progress/fly_to_point_progress/ota_progress/file_upload_callback/hms/...，含 5 个 @Inferred 待验证）
+│   │   ├── DrcMethod           19 个（DRC 远程控制指令，与 simulator catalog 1:1 对齐）
+│   │   └── ServiceMethod       69 个（services 通道方法，与 simulator catalog 1:1 对齐）
+│   ├── envelope/              # 消息封装结构（Request/Reply/Event Envelope）【已落地】
+│   └── error/                 # DJI 错误码常量 + 查表 + err_infos 结构【已落地】
+│       ├── DjiErrorCode.java  # 233 个错误码常量 + Map 查表 + describe() 方法（通用 2 + HTTP API 注册绑定 3 + MQTT services_reply 215 + 直播 13）
+│       ├── DjiErrorInfo.java  # 错误码描述条目 record（code + description）
+│       └── ErrorInfo.java     # 逐设备错误信息 record（sn + err_code）
 │
-├── model/                     # 设备型号层
+├── model/                     # 设备型号层【已落地】
 │   ├── DeviceDomain.java      # domain 枚举（0=飞行器,2=遥控器,3=机场）
 │   ├── DeviceModel.java       # 设备型号（domain+type+subType+modelKey）
 │   └── DeviceCompatibility.java # 机场-飞行器-遥控器兼容性矩阵
 │
-├── telemetry/                 # 遥测数据层
+├── telemetry/                 # 遥测数据层【已落地】
 │   ├── OsdField.java          # OSD 字段名枚举
 │   ├── StateField.java        # State 字段名枚举
 │   ├── DockOsd.java           # 机场 OSD 数据 POJO
 │   ├── DroneOsd.java          # 飞行器 OSD 数据 POJO
 │   └── enum/                  # 枚举值定义（ModeCode, NetworkState...）
 │
-├── command/                   # 指令定义层
-│   ├── service/               # services 指令（请求/回复 POJO）
-│   ├── drc/                   # DRC 指令（消息结构 + 各指令 POJO）
-│   └── event/                 # events 事件（数据结构 + 各事件 POJO）
+├── command/                   # 指令定义层【已落地 66 个 services 指令】
+│   ├── service/               # services 指令 POJO（66 个：6 个子包 + 根目录共享 record）
+│   │   ├── NoParameterRequest.java     通用空 Request（32 个无参数指令共用）
+│   │   ├── NoOutputReply.java          通用空 Reply（无 output 指令共用，@Inferred）
+│   │   ├── SimulateMission.java        跨包共享嵌套 record（wayline + flight 共用）
+│   │   ├── wayline/            # 航线任务（16 类 + 1 package-info）
+│   │   ├── camera/             # 相机/负载控制（22 类 + 1 package-info）
+│   │   ├── live/               # 直播（6 类 + 1 package-info）
+│   │   ├── flight/             # 飞行控制（5 类 + 1 package-info）
+│   │   ├── drc/                # DRC 模式切换（2 类 + 1 package-info）
+│   │   └── media/              # 媒体管理（1 类 + 1 package-info）
+│   ├── drc/                   # DRC 指令（消息结构 + 各指令 POJO）— 待分批补充
+│   └── event/                 # events 事件（数据结构 + 各事件 POJO）— 待分批补充
 │
-├── flow/                      # 协议流程层
+├── flow/                      # 协议流程层【已落地】
 │   ├── DockRegistrationFlow.java  # 机场注册流程（5 步序列）
 │   ├── PilotRegistrationFlow.java # Pilot 注册流程
 │   └── OnlineFlow.java        # 上线流程（update_topo）
 │
-├── http/                      # HTTP API 层（路径 + 请求/响应 POJO）
-├── websocket/                 # WebSocket 层（推送消息结构）
+├── http/                      # HTTP API 层【已落地骨架】
+│   ├── HttpApiPath.java       # 21 个 API 路径常量（manage/map/media/storage/wayline 五类）
+│   └── StsCredentials.java    # STS 上传凭证 record（@Inferred 标注 credentials 子结构待真机确认）
 │
-├── codec/                     # 编解码层
+├── websocket/                 # WebSocket 层【已落地骨架】
+│   ├── WsBizCode.java         # 8 个 biz_code 枚举（4 地图元素 + 4 设备拓扑推送）
+│   └── WsPushMessage.java     # 推送消息信封 record（biz_code/version/timestamp/data）
+│
+├── codec/                     # 编解码层【已落地】
 │   ├── MessageCodec.java      # JSON ↔ Java 对象
 │   ├── MessageTypeResolver.java # topic+method → 消息类型
 │   └── TopicBuilder.java      # SN + 通道 → 完整 topic
 │
-└── annotation/                # 协议标注
+└── annotation/                # 协议标注【已落地】
     ├── DocUrl.java            # DJI 文档 URL
     ├── Verified.java          # 已核实标记（DJI 文档明确）
     └── Inferred.java          # 推断标记（非官方明确，对应 M-2 诊断日志）
 ```
+
+> **落地状态汇总**（2026-08-14 更新）：
+> - **已落地**：`protocol/{topic,method,envelope,error}`、`model`、`telemetry`、`flow`、`codec`、`annotation`、`http`（2 类骨架）、`websocket`（2 类骨架）
+> - **已落地骨架**（待扩 POJO）：`protocol/method`（5 枚举类，含 1+7+20+19+69=116 个 method 名）、`http`（路径常量 + STS record）、`websocket`（biz_code 枚举 + 推送 record）
+> - **已落地**（command/service）：66 个 services 指令 POJO（32 极简用通用 record + 34 简单/中等/复杂独立 Request + 2 通用 record + 11 嵌套 record）
+> - **规划中**：`command/{drc,event}`（约 30 个指令 POJO，分批补充）
+> - SDK design doc 详见 [§1.3 非目标](../../../dji-cloud-api-sdk/docs/architecture-design.md#13-非目标) 与 [§2.1 包结构](../../../dji-cloud-api-sdk/docs/architecture-design.md#21-包结构)
 
 #### SDK 与模拟器/hivemind 的关系
 

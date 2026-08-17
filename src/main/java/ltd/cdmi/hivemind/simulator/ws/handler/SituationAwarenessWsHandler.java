@@ -17,6 +17,7 @@ package ltd.cdmi.hivemind.simulator.ws.handler;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import ltd.cdmi.dji.cloudapi.sdk.websocket.WsBizCode;
 import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
 import ltd.cdmi.hivemind.simulator.http.HivemindHttpClient;
 import ltd.cdmi.hivemind.simulator.http.api.DeviceTopoApi;
@@ -57,17 +58,17 @@ public class SituationAwarenessWsHandler implements WsMessageHandler {
     private static final Logger log = LoggerFactory.getLogger(SituationAwarenessWsHandler.class);
 
     private static final Set<String> BIZ_CODES = Set.of(
-            "device_osd",
-            "device_online",
-            "device_offline",
-            "device_update_topo"
+            WsBizCode.DEVICE_OSD.code(),
+            WsBizCode.DEVICE_ONLINE.code(),
+            WsBizCode.DEVICE_OFFLINE.code(),
+            WsBizCode.DEVICE_UPDATE_TOPO.code()
     );
 
     /** 触发"获取设备拓扑列表"的 biz_code 集合 */
     private static final Set<String> TOPO_TRIGGER_CODES = Set.of(
-            "device_online",
-            "device_offline",
-            "device_update_topo"
+            WsBizCode.DEVICE_ONLINE.code(),
+            WsBizCode.DEVICE_OFFLINE.code(),
+            WsBizCode.DEVICE_UPDATE_TOPO.code()
     );
 
     private static final int DEFAULT_MAX_LOG_SIZE = 2000;
@@ -128,7 +129,7 @@ public class SituationAwarenessWsHandler implements WsMessageHandler {
         entry.put("time", LocalDateTime.now().format(TIME_FMT));
         entry.put("biz_code", bizCode);
 
-        if ("device_osd".equals(bizCode)) {
+        if (WsBizCode.DEVICE_OSD.code().equals(bizCode)) {
             // device_osd 的 data 结构: {sn, host: {latitude, longitude, height, ...}}
             JsonNode host = data.path("host");
             entry.put("sn", data.path("sn").asText(""));

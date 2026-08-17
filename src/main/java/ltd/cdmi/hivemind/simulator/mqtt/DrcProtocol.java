@@ -15,7 +15,7 @@
 
 package ltd.cdmi.hivemind.simulator.mqtt;
 
-import ltd.cdmi.hivemind.simulator.device.DeviceType;
+import ltd.cdmi.dji.cloudapi.sdk.model.RcModel;
 
 /**
  * DRC 协议策略接口。
@@ -60,8 +60,8 @@ public interface DrcProtocol {
      * @param controllerType 遥控器类型
      * @return DRC 协议策略实例
      */
-    static DrcProtocol forController(DeviceType controllerType) {
-        if (controllerType == DeviceType.RC_PRO) {
+    static DrcProtocol forController(RcModel controllerType) {
+        if (controllerType == RcModel.RC_PRO) {
             return new RcProDrcProtocol();
         }
         return new DrcChannelDrcProtocol();

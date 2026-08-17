@@ -17,10 +17,12 @@ package ltd.cdmi.hivemind.simulator.handler;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import ltd.cdmi.dji.cloudapi.sdk.codec.DjiMessage;
+import ltd.cdmi.dji.cloudapi.sdk.command.property.PropertySetRequest;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
 import ltd.cdmi.hivemind.simulator.device.DeviceState;
-import ltd.cdmi.hivemind.simulator.device.DeviceType;
+import ltd.cdmi.dji.cloudapi.sdk.model.DockModel;
 import ltd.cdmi.hivemind.simulator.diagnostic.CoverageRecorder;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticCode;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticLogRecorder;
@@ -100,25 +102,31 @@ public class PropertySetHandler {
             // 覆盖率统计：property/set 无 method 字段，统一记 "property_set"（按当前 MQTT 地址归档）
             coverageRecorder.record(runtimeConfig.getMqttHost() + ":" + runtimeConfig.getMqttPort(), "property_set");
 
+            // 用 SDK POJO 解析 data：PropertySetRequest 通过 @JsonAnyGetter + @JsonCreator(DELEGATING)
+            // 将整个 data 对象反序列化为 flat map（properties），避免逐字段 JsonNode 手动提取。
+            // buildSetReplyData 仍需 JsonNode 递归处理 struct 属性的子字段，故同时保留 data JsonNode。
+            PropertySetRequest req = DjiMessage.parse(payload, PropertySetRequest.class).data();
+            Map<String, Object> properties = req != null ? req.properties() : Map.of();
+
             // accessMode=rw 的属性：更新本地状态，下次 state topic 反映新值
-            if (data.has("silent_mode")) {
-                int val = data.get("silent_mode").asInt();
+            if (properties.containsKey("silent_mode")) {
+                int val = ((Number) properties.get("silent_mode")).intValue();
                 state.setSilentMode(val);
                 log.info("属性设置 silent_mode={}", val);
             }
-            if (data.has("air_transfer_enable")) {
+            if (properties.containsKey("air_transfer_enable")) {
                 // air_transfer_enable 仅 Dock2/Dock3 支持（DJI 文档 Dock1 properties 列表无此字段）
                 // Dock1 收到此 set 仍回复 result=0 但不更新状态
-                if (runtimeConfig.getDockType() != DeviceType.DOCK1) {
-                    boolean val = data.get("air_transfer_enable").asBoolean();
+                if (runtimeConfig.getDockType() != DockModel.DOCK1) {
+                    boolean val = (Boolean) properties.get("air_transfer_enable");
                     state.setAirTransferEnable(val);
                     log.info("属性设置 air_transfer_enable={}", val);
                 } else {
                     log.warn("Dock1 不支持 air_transfer_enable，忽略状态更新");
                 }
             }
-            if (data.has("user_experience_improvement")) {
-                int val = data.get("user_experience_improvement").asInt();
+            if (properties.containsKey("user_experience_improvement")) {
+                int val = ((Number) properties.get("user_experience_improvement")).intValue();
                 state.setUserExperienceImprovement(val);
                 log.info("属性设置 user_experience_improvement={}", val);
             }

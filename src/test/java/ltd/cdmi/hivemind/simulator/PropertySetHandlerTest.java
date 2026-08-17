@@ -22,13 +22,14 @@ import ltd.cdmi.hivemind.simulator.config.MqttProperties;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
 import ltd.cdmi.hivemind.simulator.device.DeviceState;
-import ltd.cdmi.hivemind.simulator.device.DeviceType;
+import ltd.cdmi.dji.cloudapi.sdk.model.DockModel;
 import ltd.cdmi.hivemind.simulator.diagnostic.CoverageRecorder;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticLogRecorder;
 import ltd.cdmi.hivemind.simulator.handler.PropertySetHandler;
 import ltd.cdmi.hivemind.simulator.mqtt.DockTopicSchema;
 import ltd.cdmi.hivemind.simulator.mqtt.MqttClientManager;
 import ltd.cdmi.hivemind.simulator.mqtt.MqttClientManager.MqttMessageListener;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
@@ -52,6 +53,7 @@ class PropertySetHandlerTest {
                 new SimulatorProperties.Media("", false, 0, false, 0),
                 null,
                 null,
+                null,
                 null);
     }
 
@@ -64,11 +66,11 @@ class PropertySetHandlerTest {
 
     /** 构造 PropertySetHandler 并触发一次 property/set 回调，返回捕获的 set_reply JSON */
     private JsonNode firePropertySet(String setDataJson, DeviceState state) throws Exception {
-        return firePropertySet(setDataJson, state, DeviceType.DOCK3);
+        return firePropertySet(setDataJson, state, DockModel.DOCK3);
     }
 
     /** 构造指定 Dock 版本的 PropertySetHandler 并触发一次 property/set 回调 */
-    private JsonNode firePropertySet(String setDataJson, DeviceState state, DeviceType dockType) throws Exception {
+    private JsonNode firePropertySet(String setDataJson, DeviceState state, DockModel dockType) throws Exception {
         ObjectMapper objectMapper = new ObjectMapper();
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
         DiagnosticLogRecorder diag = Mockito.mock(DiagnosticLogRecorder.class);
@@ -108,6 +110,7 @@ class PropertySetHandlerTest {
         return objectMapper.valueToTree(objCaptor.getValue());
     }
 
+    @DisplayName("TC-PROP-001：silent_mode（rw）可通过 property/set 设置")
     @Test
     void scalarPropertySetReplyHasResultWrapper() throws Exception {
         // TC-PROP-001：标量属性 set_reply 格式
@@ -118,6 +121,7 @@ class PropertySetHandlerTest {
                 "标量属性 set_reply 应为 {\"silent_mode\": {\"result\": 0}}");
     }
 
+    @DisplayName("TC-PROP-006：struct 属性 property/set_reply 格式")
     @Test
     void structPropertySetReplyHasNestedResultWrapper() throws Exception {
         // TC-PROP-006：struct 属性 set_reply 格式（对齐 DJI 文档示例）
@@ -128,6 +132,7 @@ class PropertySetHandlerTest {
                 "struct 属性 set_reply 应为 {\"distance_limit_status\": {\"state\": {\"result\": 0}}}");
     }
 
+    @DisplayName("补充测试：set_reply 信封回显 tid/bid/timestamp")
     @Test
     void setReplyEnvelopeHasTidBidTimestamp() throws Exception {
         // set_reply envelope 必须回显 tid/bid/timestamp
@@ -137,6 +142,7 @@ class PropertySetHandlerTest {
         assertTrue(reply.has("timestamp"), "set_reply 应包含 timestamp");
     }
 
+    @DisplayName("TC-PROP-007：air_transfer_enable（rw）可通过 property/set 设置")
     @Test
     void airTransferEnablePropertySetUpdatesState() throws Exception {
         // TC-PROP-007：air_transfer_enable（rw）状态更新
@@ -146,6 +152,7 @@ class PropertySetHandlerTest {
         assertFalse(state.isAirTransferEnable(), "property/set 后应更新为 false");
     }
 
+    @DisplayName("TC-PROP-008：user_experience_improvement（rw）可通过 property/set 设置")
     @Test
     void userExperienceImprovementPropertySetUpdatesState() throws Exception {
         // TC-PROP-008：user_experience_improvement（rw）状态更新
@@ -155,6 +162,7 @@ class PropertySetHandlerTest {
         assertEquals(2, state.getUserExperienceImprovement(), "property/set 后应更新为 2（同意加入）");
     }
 
+    @DisplayName("TC-PROP-001：silent_mode（rw）状态更新")
     @Test
     void silentModePropertySetUpdatesState() throws Exception {
         // TC-PROP-001 补充：silent_mode（rw）状态更新
@@ -164,12 +172,13 @@ class PropertySetHandlerTest {
         assertEquals(1, state.getSilentMode(), "property/set 后应更新为 1（静音模式）");
     }
 
+    @DisplayName("TC-PROP-007：Dock1 不支持 air_transfer_enable 收到 set 不更新状态")
     @Test
     void dock1AirTransferEnableSetDoesNotUpdateState() throws Exception {
         // TC-PROP-007 Dock1 特例：Dock1 不支持 air_transfer_enable，收到 set 不更新状态
         DeviceState state = new DeviceState();
         assertTrue(state.isAirTransferEnable(), "默认应为 true");
-        JsonNode reply = firePropertySet("{\"air_transfer_enable\": false}", state, DeviceType.DOCK1);
+        JsonNode reply = firePropertySet("{\"air_transfer_enable\": false}", state, DockModel.DOCK1);
         assertTrue(state.isAirTransferEnable(), "Dock1 不支持 air_transfer_enable，状态不应更新");
         // 仍回复 set_reply（result=0）
         assertEquals(0, reply.path("data").path("air_transfer_enable").path("result").asInt(),

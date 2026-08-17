@@ -107,7 +107,7 @@ public class MqttClientManager implements MqttCallbackExtended {
             options.setKeepAliveInterval(30);
             // 告知 broker 本客户端的遗嘱：设备下线（QoS 1）
             // DJI 下线通过 update_topo 的空 sub_devices 列表体现，method 字段必须为 update_topo
-            String willPayload = "{\"method\":\"update_topo\",\"data\":{\"type\":3,\"sub_type\":0,\"sub_devices\":[],\"thing_version\":\"3.0.0.0\"}}";
+            String willPayload = "{\"method\":\"update_topo\",\"data\":{\"type\":3,\"sub_type\":0,\"sub_devices\":[],\"thing_version\":\"" + runtimeConfig.getThingVersion() + "\"}}";
             TopicSchema schema = currentTopicSchema();
             options.setWill(
                     schema.topic(schema.status(), runtimeConfig.getGatewaySn()),

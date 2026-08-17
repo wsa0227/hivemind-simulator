@@ -18,9 +18,15 @@ package ltd.cdmi.hivemind.simulator.handler;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
+import ltd.cdmi.dji.cloudapi.sdk.codec.MessageCodec;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.envelope.EventEnvelope;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.EventMethod;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.ServiceMethod;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
 import ltd.cdmi.hivemind.simulator.device.DockOnlineService;
+import ltd.cdmi.hivemind.simulator.media.MediaUploader;
+import ltd.cdmi.hivemind.simulator.media.StorageConfig;
 import ltd.cdmi.hivemind.simulator.mqtt.DockTopicSchema;
 import ltd.cdmi.hivemind.simulator.mqtt.MqttClientManager;
 import org.slf4j.Logger;
@@ -149,10 +155,10 @@ public class MediaUploadSimulator {
     public Map<String, Object> handleMediaCommand(String method, JsonNode data) {
         log.info("处理媒体命令: method={}", method);
 
-        return switch (method) {
-            case "upload_flighttask_media_prioritize" -> handlePrioritize(data);
-            default -> Map.of("result", 0);
-        };
+        if (ServiceMethod.UPLOAD_FLIGHTTASK_MEDIA_PRIORITIZE.methodName().equals(method)) {
+            return handlePrioritize(data);
+        }
+        return Map.of("result", 0);
     }
 
     /**
@@ -258,7 +264,7 @@ public class MediaUploadSimulator {
     private void publishHighestPriority(String flightId) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("flight_id", flightId);
-        publishEventAndWaitReply("highest_priority_upload_flighttask_media", data);
+        publishEventAndWaitReply(EventMethod.HIGHEST_PRIORITY_UPLOAD_FLIGHTTASK_MEDIA, data);
     }
 
     /**
@@ -302,49 +308,43 @@ public class MediaUploadSimulator {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("file", file);
 
-        publishEventAndWaitReply("file_upload_callback", data);
+        publishEventAndWaitReply(EventMethod.FILE_UPLOAD_CALLBACK, data);
         log.info("已上报媒体文件: flightId={}, file={}", flightId, fileName);
     }
 
     /**
      * 发布事件并等待 events_reply（need_reply=1）。
      * <p>用 tid 关联 CompletableFuture，超时不阻塞流程（warn 日志后继续）。</p>
-     * @param method 事件方法名
+     * @param method 事件方法枚举
      * @param data 事件 data
      */
-    private void publishEventAndWaitReply(String method, Map<String, Object> data) {
+    private void publishEventAndWaitReply(EventMethod method, Map<String, Object> data) {
         ensureReplyListeners();
         String tid = UUID.randomUUID().toString();
         String bid = UUID.randomUUID().toString();
 
-        Map<String, Object> envelope = new LinkedHashMap<>();
-        envelope.put("bid", bid);
-        envelope.put("data", data);
-        envelope.put("gateway", runtimeConfig.getDockSn());
-        envelope.put("method", method);
-        envelope.put("need_reply", 1);
-        envelope.put("tid", tid);
-        envelope.put("timestamp", System.currentTimeMillis());
+        EventEnvelope envelope = EventEnvelope.of(tid, bid, System.currentTimeMillis(),
+                method, data, runtimeConfig.getDockSn());
 
         // 注册等待 future
         CompletableFuture<JsonNode> future = new CompletableFuture<>();
         pendingEventReplies.put(tid, future);
 
         String topic = dockTopicSchema.topic(dockTopicSchema.events(), runtimeConfig.getDockSn());
-        mqtt.publishJson(topic, envelope);
+        mqtt.publish(topic, MessageCodec.toJson(envelope));
 
         // 等待 events_reply
         try {
             JsonNode reply = future.get(eventReplyTimeoutSeconds(), TimeUnit.SECONDS);
             int result = reply.path("data").path("result").asInt(-1);
             if (result == 0) {
-                log.debug("收到 events_reply: method={}, result=0", method);
+                log.debug("收到 events_reply: method={}, result=0", method.methodName());
             } else {
-                log.warn("events_reply 返回非零: method={}, result={}", method, result);
+                log.warn("events_reply 返回非零: method={}, result={}", method.methodName(), result);
             }
         } catch (Exception e) {
             pendingEventReplies.remove(tid);
-            log.warn("等待 events_reply 超时（不阻塞后续上传）: method={}, {}", method, e.getMessage());
+            log.warn("等待 events_reply 超时（不阻塞后续上传）: method={}, {}", method.methodName(), e.getMessage());
         }
     }
 

@@ -19,7 +19,14 @@ import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.annotation.PreDestroy;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.device.DeviceState;
-import ltd.cdmi.hivemind.simulator.device.DeviceType;
+import ltd.cdmi.dji.cloudapi.sdk.model.DockModel;
+import ltd.cdmi.dji.cloudapi.sdk.codec.MessageCodec;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.debug.AirConditionerModeSwitchRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.debug.AlarmStateSwitchRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.debug.BatteryStoreModeSwitchRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.debug.RtkCalibrationRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.debug.SdrWorkmodeSwitchRequest;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.ServiceMethod;
 import ltd.cdmi.hivemind.simulator.mqtt.DockTopicSchema;
 import ltd.cdmi.hivemind.simulator.mqtt.MqttClientManager;
 import org.slf4j.Logger;
@@ -65,41 +72,41 @@ public class RemoteDebugSimulator {
 
     /** 三 Dock 共有 Job 指令（需进度事件） */
     private static final Set<String> COMMON_JOB_METHODS = Set.of(
-            "cover_open", "cover_close", "cover_force_close",
-            "drone_open", "drone_close",
-            "charge_open", "charge_close",
-            "device_reboot", "device_format", "drone_format"
+            ServiceMethod.COVER_OPEN.methodName(), ServiceMethod.COVER_CLOSE.methodName(), ServiceMethod.COVER_FORCE_CLOSE.methodName(),
+            ServiceMethod.DRONE_OPEN.methodName(), ServiceMethod.DRONE_CLOSE.methodName(),
+            ServiceMethod.CHARGE_OPEN.methodName(), ServiceMethod.CHARGE_CLOSE.methodName(),
+            ServiceMethod.DEVICE_REBOOT.methodName(), ServiceMethod.DEVICE_FORMAT.methodName(), ServiceMethod.DRONE_FORMAT.methodName()
     );
 
     /** 三 Dock 共有 Cmd 指令（仅 services_reply） */
     private static final Set<String> COMMON_CMD_METHODS = Set.of(
-            "debug_mode_open", "debug_mode_close",
-            "supplement_light_open", "supplement_light_close",
-            "battery_maintenance_switch", "battery_store_mode_switch",
-            "alarm_state_switch", "air_conditioner_mode_switch",
-            "sdr_workmode_switch"
+            ServiceMethod.DEBUG_MODE_OPEN.methodName(), ServiceMethod.DEBUG_MODE_CLOSE.methodName(),
+            ServiceMethod.SUPPLEMENT_LIGHT_OPEN.methodName(), ServiceMethod.SUPPLEMENT_LIGHT_CLOSE.methodName(),
+            ServiceMethod.BATTERY_MAINTENANCE_SWITCH.methodName(), ServiceMethod.BATTERY_STORE_MODE_SWITCH.methodName(),
+            ServiceMethod.ALARM_STATE_SWITCH.methodName(), ServiceMethod.AIR_CONDITIONER_MODE_SWITCH.methodName(),
+            ServiceMethod.SDR_WORKMODE_SWITCH.methodName()
     );
 
     // ==================== Dock 特有指令 ====================
 
     /** Dock1 独有 Job 指令 */
     private static final Set<String> DOCK1_JOB_METHODS = Set.of(
-            "putter_open", "putter_close"
+            ServiceMethod.PUTTER_OPEN.methodName(), ServiceMethod.PUTTER_CLOSE.methodName()
     );
 
     /** Dock2/Dock3 共有 Job 指令 */
     private static final Set<String> DOCK2_3_JOB_METHODS = Set.of(
-            "esim_activate", "esim_operator_switch"
+            ServiceMethod.ESIM_ACTIVATE.methodName(), ServiceMethod.ESIM_OPERATOR_SWITCH.methodName()
     );
 
     /** Dock2/Dock3 共有 Cmd 指令 */
     private static final Set<String> DOCK2_3_CMD_METHODS = Set.of(
-            "sim_slot_switch"
+            ServiceMethod.SIM_SLOT_SWITCH.methodName()
     );
 
     /** Dock3 独有 Job 指令 */
     private static final Set<String> DOCK3_JOB_METHODS = Set.of(
-            "rtk_calibration"
+            ServiceMethod.RTK_CALIBRATION.methodName()
     );
 
     /**
@@ -108,8 +115,8 @@ public class RemoteDebugSimulator {
      * 其他 Cmd 指令（debug_mode_open/battery_maintenance_switch 等）有 output.status。</p>
      */
     private static final Set<String> CMD_METHODS_WITHOUT_OUTPUT = Set.of(
-            "sdr_workmode_switch",
-            "sim_slot_switch"
+            ServiceMethod.SDR_WORKMODE_SWITCH.methodName(),
+            ServiceMethod.SIM_SLOT_SWITCH.methodName()
     );
 
     /**
@@ -118,7 +125,7 @@ public class RemoteDebugSimulator {
      * 其他 Job 指令（cover_open/drone_open 等）有 output.status="sent"。</p>
      */
     private static final Set<String> JOB_METHODS_WITHOUT_OUTPUT = Set.of(
-            "esim_operator_switch"
+            ServiceMethod.ESIM_OPERATOR_SWITCH.methodName()
     );
 
     // ==================== 所有远程调试指令（供 ServiceCommandHandler 路由判断） ====================
@@ -154,14 +161,14 @@ public class RemoteDebugSimulator {
      * rtk_calibration 使用 current_step（int），也不在此映射中（由 publishProgressEvent 特殊处理）。</p>
      */
     private static final Map<String, String> STEP_KEYS = Map.of(
-            "cover_open", "open_cover",
-            "cover_close", "close_cover",
-            "drone_close", "close_drone",
-            "device_reboot", "write_reboot_param_file",
-            "charge_open", "get_bid",
-            "charge_close", "get_bid",
-            "putter_open", "get_bid",
-            "putter_close", "get_bid"
+            ServiceMethod.COVER_OPEN.methodName(), "open_cover",
+            ServiceMethod.COVER_CLOSE.methodName(), "close_cover",
+            ServiceMethod.DRONE_CLOSE.methodName(), "close_drone",
+            ServiceMethod.DEVICE_REBOOT.methodName(), "write_reboot_param_file",
+            ServiceMethod.CHARGE_OPEN.methodName(), "get_bid",
+            ServiceMethod.CHARGE_CLOSE.methodName(), "get_bid",
+            ServiceMethod.PUTTER_OPEN.methodName(), "get_bid",
+            ServiceMethod.PUTTER_CLOSE.methodName(), "get_bid"
     );
 
     private final MqttClientManager mqtt;
@@ -200,21 +207,21 @@ public class RemoteDebugSimulator {
     /**
      * 统一路由远程调试指令（由 ServiceCommandHandler 调用）。
      * @param method 指令方法名
-     * @param data   指令 data（当前未使用，预留参数解析）
+     * @param data   指令 data（对有 SDK POJO 的指令反序列化为 POJO 并记录请求字段，见 {@link #logServiceRequest}；无 POJO 的指令不解析）
      * @param bid    原始 services 指令的 bid（进度事件需保持一致）
      * @return services_reply 的 output（含 result 字段）
      */
     public Map<String, Object> handle(String method, JsonNode data, String bid) {
-        DeviceType dockType = runtimeConfig.getDockType();
+        DockModel dockType = runtimeConfig.getDockType();
 
         // 判断是否为当前 Dock 类型支持的 Job 指令
         if (isJobMethodSupported(method, dockType)) {
-            return handleJob(method, bid, dockType);
+            return handleJob(method, data, bid, dockType);
         }
 
         // 判断是否为当前 Dock 类型支持的 Cmd 指令
         if (isCmdMethodSupported(method, dockType)) {
-            return handleCmd(method);
+            return handleCmd(method, data);
         }
 
         // 不属于当前 Dock 类型的指令（如 Dock2 收到 putter_open）：返回 rejected，不发进度事件
@@ -224,6 +231,42 @@ public class RemoteDebugSimulator {
         return Map.of("result", 0, "output", rejectOutput);
     }
 
+    // ==================== 请求解析（SDK POJO，仅覆盖有 POJO 的指令） ====================
+
+    /**
+     * 解析 services 请求 data 并记录请求字段（仅对有 SDK POJO 的指令）。
+     * <p>对齐项目其他 Simulator 的 SDK POJO 解析模式：使用 {@link MessageCodec#fromJson}
+     * 将 data 反序列化为 SDK POJO，通过 record 访问器读取字段并记录日志。无对应 SDK POJO
+     * 的指令（cover_open/drone_open/debug_mode_open/supplement_light_open/
+     * battery_maintenance_switch/putter_open/esim_activate/esim_operator_switch/
+     * sim_slot_switch 等）保留原有行为——不解析请求参数。</p>
+     * <p>SDK POJO 覆盖的指令：air_conditioner_mode_switch、alarm_state_switch、
+     * battery_store_mode_switch、rtk_calibration、sdr_workmode_switch。</p>
+     */
+    private void logServiceRequest(String method, JsonNode data) {
+        // data 可能为 null（如 rtk_calibration 在测试中以 data=null 调用），直接返回避免 NPE
+        if (data == null || data.isMissingNode()) {
+            return;
+        }
+        if (ServiceMethod.AIR_CONDITIONER_MODE_SWITCH.methodName().equals(method)) {
+            var req = MessageCodec.fromJson(data.toString(), AirConditionerModeSwitchRequest.class);
+            log.info("air_conditioner_mode_switch 请求: mode={}", req.mode());
+        } else if (ServiceMethod.ALARM_STATE_SWITCH.methodName().equals(method)) {
+            var req = MessageCodec.fromJson(data.toString(), AlarmStateSwitchRequest.class);
+            log.info("alarm_state_switch 请求: action={}", req.action());
+        } else if (ServiceMethod.BATTERY_STORE_MODE_SWITCH.methodName().equals(method)) {
+            var req = MessageCodec.fromJson(data.toString(), BatteryStoreModeSwitchRequest.class);
+            log.info("battery_store_mode_switch 请求: mode={}", req.mode());
+        } else if (ServiceMethod.RTK_CALIBRATION.methodName().equals(method)) {
+            var req = MessageCodec.fromJson(data.toString(), RtkCalibrationRequest.class);
+            log.info("rtk_calibration 请求: cali_type={}", req.caliType());
+        } else if (ServiceMethod.SDR_WORKMODE_SWITCH.methodName().equals(method)) {
+            var req = MessageCodec.fromJson(data.toString(), SdrWorkmodeSwitchRequest.class);
+            log.info("sdr_workmode_switch 请求: link_workmode={}", req.linkWorkmode());
+        }
+        // 无对应 SDK POJO 的指令，保留原行为（不解析请求参数）
+    }
+
     // ==================== Job 指令处理（异步双阶段确认） ====================
 
     /**
@@ -231,8 +274,9 @@ public class RemoteDebugSimulator {
      * <p>DJI 文档：大部分 Job 指令的 services_reply 有 output.status="sent"（已下发），
      * 但部分指令（esim_operator_switch）的 services_reply 仅有 result，无 output。</p>
      */
-    private Map<String, Object> handleJob(String method, String bid, DeviceType dockType) {
+    private Map<String, Object> handleJob(String method, JsonNode data, String bid, DockModel dockType) {
         log.info("远程调试 Job 指令: method={}, bid={}, dockType={}", method, bid, dockType);
+        logServiceRequest(method, data);
         scheduleProgressEvent(method, bid);
         // esim_operator_switch 等指令的 services_reply 仅有 result，无 output（DJI 文档明确）
         if (JOB_METHODS_WITHOUT_OUTPUT.contains(method)) {
@@ -277,7 +321,7 @@ public class RemoteDebugSimulator {
             Map<String, Object> output = new LinkedHashMap<>();
             output.put("status", status);
 
-            if ("rtk_calibration".equals(method)) {
+            if (ServiceMethod.RTK_CALIBRATION.methodName().equals(method)) {
                 // rtk_calibration 特殊结构（DJI Dock3 cmd 文档）：
                 // ext.devices 数组 + progress.current_step（int，非 step_key）
                 output.put("ext", buildRtkCalibrationExt(status));
@@ -285,7 +329,7 @@ public class RemoteDebugSimulator {
                 progress.put("percent", percent);
                 progress.put("current_step", 1);
                 output.put("progress", progress);
-            } else if (!"drone_open".equals(method)) {
+            } else if (!ServiceMethod.DRONE_OPEN.methodName().equals(method)) {
                 // 通用结构：progress.percent + step_key?
                 Map<String, Object> progress = new LinkedHashMap<>();
                 progress.put("percent", percent);
@@ -307,7 +351,7 @@ public class RemoteDebugSimulator {
             envelope.put("timestamp", System.currentTimeMillis());
             // DJI topic-definition 文档：need_reply 是 events 结构的字段，所有 events 都应包含
             // rtk_calibration 需要 need_reply=1（DJI Dock3 cmd 文档明确），通用指令 need_reply=0
-            envelope.put("need_reply", "rtk_calibration".equals(method) ? 1 : 0);
+            envelope.put("need_reply", ServiceMethod.RTK_CALIBRATION.methodName().equals(method) ? 1 : 0);
             // DJI topic-definition 文档：gateway 是公共字段，所有消息都应包含
             envelope.put("gateway", runtimeConfig.getDockSn());
             envelope.put("method", method);
@@ -357,28 +401,47 @@ public class RemoteDebugSimulator {
      * </p>
      */
     private void syncDeviceState(String method) {
-        switch (method) {
-            case "cover_open" -> state.setCoverOpen(true);
-            case "cover_close", "cover_force_close" -> state.setCoverOpen(false);
-            case "drone_open" -> state.setDroneActivated(true);
-            case "drone_close" -> state.setDroneActivated(false);
-            case "charge_open" -> state.setDroneChargeState(1);
-            case "charge_close" -> state.setDroneChargeState(0);
-            case "putter_open" -> state.setPutterExpanded(true);
-            case "putter_close" -> state.setPutterExpanded(false);
-            default -> { /* device_reboot, device_format, drone_format, esim_activate, esim_operator_switch, rtk_calibration 无状态变更 */ }
+        if (ServiceMethod.COVER_OPEN.methodName().equals(method)) {
+            state.setCoverOpen(true);
+        } else if (ServiceMethod.COVER_CLOSE.methodName().equals(method)
+                || ServiceMethod.COVER_FORCE_CLOSE.methodName().equals(method)) {
+            state.setCoverOpen(false);
+        } else if (ServiceMethod.DRONE_OPEN.methodName().equals(method)) {
+            state.setDroneActivated(true);
+        } else if (ServiceMethod.DRONE_CLOSE.methodName().equals(method)) {
+            state.setDroneActivated(false);
+        } else if (ServiceMethod.CHARGE_OPEN.methodName().equals(method)) {
+            state.setDroneChargeState(1);
+        } else if (ServiceMethod.CHARGE_CLOSE.methodName().equals(method)) {
+            state.setDroneChargeState(0);
+        } else if (ServiceMethod.PUTTER_OPEN.methodName().equals(method)) {
+            state.setPutterExpanded(true);
+        } else if (ServiceMethod.PUTTER_CLOSE.methodName().equals(method)) {
+            state.setPutterExpanded(false);
         }
+        // device_reboot, device_format, drone_format, esim_activate, esim_operator_switch, rtk_calibration 无状态变更
         log.info("远程调试状态同步: method={} → {}", method, stateSnapshot(method));
     }
 
     private String stateSnapshot(String method) {
-        return switch (method) {
-            case "cover_open", "cover_close", "cover_force_close" -> "coverOpen=" + state.isCoverOpen();
-            case "drone_open", "drone_close" -> "droneActivated=" + state.isDroneActivated();
-            case "charge_open", "charge_close" -> "droneChargeState=" + state.getDroneChargeState();
-            case "putter_open", "putter_close" -> "putterExpanded=" + state.isPutterExpanded();
-            default -> "无状态变更";
-        };
+        if (ServiceMethod.COVER_OPEN.methodName().equals(method)
+                || ServiceMethod.COVER_CLOSE.methodName().equals(method)
+                || ServiceMethod.COVER_FORCE_CLOSE.methodName().equals(method)) {
+            return "coverOpen=" + state.isCoverOpen();
+        }
+        if (ServiceMethod.DRONE_OPEN.methodName().equals(method)
+                || ServiceMethod.DRONE_CLOSE.methodName().equals(method)) {
+            return "droneActivated=" + state.isDroneActivated();
+        }
+        if (ServiceMethod.CHARGE_OPEN.methodName().equals(method)
+                || ServiceMethod.CHARGE_CLOSE.methodName().equals(method)) {
+            return "droneChargeState=" + state.getDroneChargeState();
+        }
+        if (ServiceMethod.PUTTER_OPEN.methodName().equals(method)
+                || ServiceMethod.PUTTER_CLOSE.methodName().equals(method)) {
+            return "putterExpanded=" + state.isPutterExpanded();
+        }
+        return "无状态变更";
     }
 
     // ==================== Cmd 指令处理（同步，无进度事件） ====================
@@ -389,8 +452,9 @@ public class RemoteDebugSimulator {
      * 大部分 Cmd 指令有 output.status="ok"（执行成功），但部分指令（sdr_workmode_switch）
      * 的 services_reply 仅有 result，无 output。</p>
      */
-    private Map<String, Object> handleCmd(String method) {
+    private Map<String, Object> handleCmd(String method, JsonNode data) {
         log.info("远程调试 Cmd 指令: method={}（同步应答，无进度事件）", method);
+        logServiceRequest(method, data);
         // sdr_workmode_switch 等指令的 services_reply 仅有 result，无 output（DJI 文档明确）
         if (CMD_METHODS_WITHOUT_OUTPUT.contains(method)) {
             return Map.of("result", 0);
@@ -405,7 +469,7 @@ public class RemoteDebugSimulator {
     /**
      * 判断 method 是否为当前 Dock 类型支持的 Job 指令。
      */
-    private boolean isJobMethodSupported(String method, DeviceType dockType) {
+    private boolean isJobMethodSupported(String method, DockModel dockType) {
         if (COMMON_JOB_METHODS.contains(method)) {
             return true;
         }
@@ -420,7 +484,7 @@ public class RemoteDebugSimulator {
     /**
      * 判断 method 是否为当前 Dock 类型支持的 Cmd 指令。
      */
-    private boolean isCmdMethodSupported(String method, DeviceType dockType) {
+    private boolean isCmdMethodSupported(String method, DockModel dockType) {
         if (COMMON_CMD_METHODS.contains(method)) {
             return true;
         }

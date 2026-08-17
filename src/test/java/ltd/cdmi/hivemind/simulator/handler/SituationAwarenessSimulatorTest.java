@@ -21,6 +21,7 @@ import ltd.cdmi.hivemind.simulator.http.HivemindHttpClient;
 import ltd.cdmi.hivemind.simulator.http.api.DeviceTopoApi;
 import ltd.cdmi.hivemind.simulator.ws.handler.SituationAwarenessWsHandler;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -50,6 +51,7 @@ class SituationAwarenessSimulatorTest {
 
     // ==================== TC-TSA-005：Pilot 首次上线主动调用获取设备拓扑列表 ====================
 
+    @DisplayName("TC-TSA-005：Pilot 首次上线主动调用获取设备拓扑列表")
     @Test
     void initInPilotModeTriggersDeviceTopoFetch() {
         when(runtimeConfig.getDeviceMode()).thenReturn(DeviceMode.PILOT);
@@ -63,6 +65,7 @@ class SituationAwarenessSimulatorTest {
 
     // ==================== TC-TSA-008：非 Pilot 模式不触发首次获取设备拓扑 ====================
 
+    @DisplayName("TC-TSA-008：非 Pilot 模式不触发首次获取设备拓扑")
     @Test
     void initInDockModeDoesNotTriggerFetch() {
         when(runtimeConfig.getDeviceMode()).thenReturn(DeviceMode.DOCK);
@@ -74,6 +77,7 @@ class SituationAwarenessSimulatorTest {
 
     // ==================== 事件日志委托给 wsHandler ====================
 
+    @DisplayName("补充测试：getWsEvents 委托给 handler")
     @Test
     void getWsEventsDelegatesToHandler() {
         List<Map<String, Object>> expected = List.of(Map.of("biz_code", "device_online"));
@@ -85,6 +89,7 @@ class SituationAwarenessSimulatorTest {
         verify(wsHandler, times(1)).getEvents();
     }
 
+    @DisplayName("补充测试：getWsEventCount 委托给 handler")
     @Test
     void getWsEventCountDelegatesToHandler() {
         when(wsHandler.getEventCount()).thenReturn(42);
@@ -93,6 +98,7 @@ class SituationAwarenessSimulatorTest {
         verify(wsHandler, times(1)).getEventCount();
     }
 
+    @DisplayName("补充测试：clearWsEvents 委托给 handler")
     @Test
     void clearWsEventsDelegatesToHandler() {
         simulator.clearWsEvents();
@@ -102,6 +108,7 @@ class SituationAwarenessSimulatorTest {
 
     // ==================== fetchDeviceTopo 委托给 deviceTopoApi ====================
 
+    @DisplayName("补充测试：fetchDeviceTopo 委托给 API")
     @Test
     void fetchDeviceTopoDelegatesToApi() {
         HivemindHttpClient.HivemindResponse expected =

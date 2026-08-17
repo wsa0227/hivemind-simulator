@@ -15,8 +15,12 @@
 
 package ltd.cdmi.hivemind.simulator.device;
 
+import ltd.cdmi.dji.cloudapi.sdk.model.DroneModel;
+
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
+import ltd.cdmi.hivemind.simulator.device.osd.M4StateBuilder;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -44,15 +48,17 @@ class M4StateBuilderTest {
         Mockito.when(runtimeConfig.getLocationLongitude()).thenReturn(113.9);
     }
 
+    @DisplayName("TC-ONLINE-011：Matrice 4 系列（M4E/M4T）Pilot 模式 drone state 字段集 — supports M400/M4E/M4T")
     @Test
     void supportsM400M4EM4T() {
-        assertTrue(builder.supports(DeviceType.M400), "M400 与 M4E/M4T state 字段集一致，复用 M4StateBuilder");
-        assertTrue(builder.supports(DeviceType.M4E));
-        assertTrue(builder.supports(DeviceType.M4T));
-        assertFalse(builder.supports(DeviceType.MAVIC_3E));
-        assertFalse(builder.supports(DeviceType.M4D));
+        assertTrue(builder.supports(DroneModel.M400), "M400 与 M4E/M4T state 字段集一致，复用 M4StateBuilder");
+        assertTrue(builder.supports(DroneModel.M4E));
+        assertTrue(builder.supports(DroneModel.M4T));
+        assertFalse(builder.supports(DroneModel.MAVIC_3E));
+        assertFalse(builder.supports(DroneModel.M4D));
     }
 
+    @DisplayName("TC-ONLINE-011：Matrice 4 系列（M4E/M4T）Pilot 模式 drone state 字段集 — pushMode=1 字段完整覆盖")
     @Test
     void buildDroneStateContainsAllPushMode1Fields() {
         Map<String, Object> data = builder.buildDroneState(runtimeConfig);
@@ -79,6 +85,7 @@ class M4StateBuilderTest {
         assertTrue(data.containsKey("camera_watermark_settings"));
     }
 
+    @DisplayName("TC-ONLINE-011：Matrice 4 系列（M4E/M4T）Pilot 模式 drone state 字段集 — 不含 firmware_version（pushMode=0 在 OSD）")
     @Test
     void buildDroneStateExcludesFirmwareVersion() {
         Map<String, Object> data = builder.buildDroneState(runtimeConfig);
@@ -86,6 +93,7 @@ class M4StateBuilderTest {
                 "Matrice 4 系列 firmware_version pushMode=0，应在 OSD 上报，不应在 state");
     }
 
+    @DisplayName("TC-ONLINE-011：Matrice 4 系列（M4E/M4T）Pilot 模式 drone state 字段集 — 不含 payloads/wpmz_version/psdk_*")
     @Test
     void buildDroneStateExcludesPayloadAndPsdkFields() {
         Map<String, Object> data = builder.buildDroneState(runtimeConfig);
@@ -95,6 +103,7 @@ class M4StateBuilderTest {
         assertFalse(data.containsKey("psdk_widget_values"), "Matrice 4 系列属性列表未列 psdk_widget_values");
     }
 
+    @DisplayName("TC-ONLINE-011：Matrice 4 系列（M4E/M4T）Pilot 模式 drone state 字段集 — home_latitude/home_longitude 来自 RuntimeConfig")
     @Test
     void homeLatLonFromRuntimeConfig() {
         Map<String, Object> data = builder.buildDroneState(runtimeConfig);
@@ -102,6 +111,7 @@ class M4StateBuilderTest {
         assertEquals(113.9, data.get("home_longitude"));
     }
 
+    @DisplayName("TC-ONLINE-011：Matrice 4 系列（M4E/M4T）Pilot 模式 drone state 字段集 — dongle_infos 结构体对齐 DJI 规格")
     @Test
     void dongleInfosStructureMatchesDjiSpec() {
         Map<String, Object> data = builder.buildDroneState(runtimeConfig);
@@ -121,6 +131,7 @@ class M4StateBuilderTest {
         assertTrue(dongle.containsKey("sim_info"));
     }
 
+    @DisplayName("TC-ONLINE-011：Matrice 4 系列（M4E/M4T）Pilot 模式 drone state 字段集 — camera_watermark_settings 结构体对齐 DJI 规格")
     @Test
     void cameraWatermarkSettingsStructureMatchesDjiSpec() {
         Map<String, Object> data = builder.buildDroneState(runtimeConfig);

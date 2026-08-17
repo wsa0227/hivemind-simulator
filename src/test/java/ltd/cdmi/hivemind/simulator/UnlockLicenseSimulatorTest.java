@@ -18,6 +18,7 @@ package ltd.cdmi.hivemind.simulator;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import ltd.cdmi.hivemind.simulator.handler.UnlockLicenseSimulator;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
@@ -44,6 +45,7 @@ class UnlockLicenseSimulatorTest {
 
     // ==================== TC-UNLOCK-001：unlock_license_switch 启用证书 ====================
 
+    @DisplayName("TC-UNLOCK-001：unlock_license_switch 启用证书")
     @Test
     void switchEnableLicense() throws Exception {
         UnlockLicenseSimulator simulator = new UnlockLicenseSimulator();
@@ -57,6 +59,7 @@ class UnlockLicenseSimulatorTest {
 
     // ==================== TC-UNLOCK-002：unlock_license_switch 禁用证书 ====================
 
+    @DisplayName("TC-UNLOCK-002：unlock_license_switch 禁用证书")
     @Test
     void switchDisableLicense() throws Exception {
         UnlockLicenseSimulator simulator = new UnlockLicenseSimulator();
@@ -70,6 +73,7 @@ class UnlockLicenseSimulatorTest {
 
     // ==================== TC-UNLOCK-003：unlock_license_update 带文件 ====================
 
+    @DisplayName("TC-UNLOCK-003：unlock_license_update 带文件")
     @Test
     void updateWithFile() throws Exception {
         UnlockLicenseSimulator simulator = new UnlockLicenseSimulator();
@@ -83,6 +87,7 @@ class UnlockLicenseSimulatorTest {
 
     // ==================== TC-UNLOCK-004：unlock_license_update 无文件 ====================
 
+    @DisplayName("TC-UNLOCK-004：unlock_license_update 无文件")
     @Test
     void updateWithoutFile() throws Exception {
         UnlockLicenseSimulator simulator = new UnlockLicenseSimulator();
@@ -95,6 +100,7 @@ class UnlockLicenseSimulatorTest {
 
     // ==================== TC-UNLOCK-005：isUnlockLicenseMethod 指令识别 ====================
 
+    @DisplayName("TC-UNLOCK-005：isUnlockLicenseMethod 指令识别")
     @Test
     void isUnlockLicenseMethodRecognition() {
         assertTrue(UnlockLicenseSimulator.isUnlockLicenseMethod("unlock_license_switch"));
@@ -106,6 +112,7 @@ class UnlockLicenseSimulatorTest {
 
     // ==================== 补充：resetLicenses 清空状态 ====================
 
+    @DisplayName("补充测试：resetLicenses 清空状态")
     @Test
     void resetClearsLicenses() throws Exception {
         UnlockLicenseSimulator simulator = new UnlockLicenseSimulator();
@@ -120,6 +127,7 @@ class UnlockLicenseSimulatorTest {
 
     // ==================== 补充：switch 同一 license_id 覆盖状态 ====================
 
+    @DisplayName("补充测试：switch 同一 license_id 覆盖状态")
     @Test
     void switchSameLicenseIdOverwrites() throws Exception {
         UnlockLicenseSimulator simulator = new UnlockLicenseSimulator();
@@ -135,6 +143,7 @@ class UnlockLicenseSimulatorTest {
     // ==================== TC-UNLOCK-006：unlock_license_list 返回 7 种证书类型 ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-UNLOCK-006：unlock_license_list 返回 7 种证书类型")
     @Test
     void listReturnsSevenLicenseTypes() throws Exception {
         UnlockLicenseSimulator simulator = new UnlockLicenseSimulator();
@@ -165,6 +174,7 @@ class UnlockLicenseSimulatorTest {
 
     // ==================== TC-UNLOCK-007：unlock_license_list 回显 device_model_domain ====================
 
+    @DisplayName("TC-UNLOCK-007：unlock_license_list 回显 device_model_domain")
     @Test
     void listEchoesDeviceModelDomain() throws Exception {
         UnlockLicenseSimulator simulator = new UnlockLicenseSimulator();
@@ -177,6 +187,7 @@ class UnlockLicenseSimulatorTest {
     // ==================== TC-UNLOCK-008：switch 修改的 enabled 状态反映到 list ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-UNLOCK-008：switch 修改的 enabled 状态反映到 list")
     @Test
     void switchEnabledReflectsInList() throws Exception {
         UnlockLicenseSimulator simulator = new UnlockLicenseSimulator();
@@ -201,6 +212,7 @@ class UnlockLicenseSimulatorTest {
     // ==================== TC-UNLOCK-009：各类型 unlock 结构完整性 ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-UNLOCK-009：unlock_license_list 各类型 unlock 结构完整性")
     @Test
     void listUnlockStructureCompleteness() throws Exception {
         UnlockLicenseSimulator simulator = new UnlockLicenseSimulator();
@@ -248,6 +260,7 @@ class UnlockLicenseSimulatorTest {
 
     // ==================== TC-UNLOCK-010：switch 不同 license_id 状态独立 ====================
 
+    @DisplayName("TC-UNLOCK-010：switch 不同 license_id 状态独立")
     @Test
     void switchDifferentLicenseIdsAreIndependent() throws Exception {
         UnlockLicenseSimulator simulator = new UnlockLicenseSimulator();
@@ -263,6 +276,7 @@ class UnlockLicenseSimulatorTest {
     // ==================== TC-UNLOCK-011：reset 后 list 的 enabled 恢复默认 false ====================
 
     @SuppressWarnings("unchecked")
+    @DisplayName("TC-UNLOCK-011：reset 后 list 的 enabled 恢复默认 false")
     @Test
     void resetRestoresListEnabledToDefault() throws Exception {
         UnlockLicenseSimulator simulator = new UnlockLicenseSimulator();
@@ -281,6 +295,7 @@ class UnlockLicenseSimulatorTest {
 
     // ==================== TC-UNLOCK-012：list 缺省 device_model_domain 默认 0 ====================
 
+    @DisplayName("TC-UNLOCK-012：list 缺省 device_model_domain 默认 0")
     @Test
     void listDefaultsDeviceModelDomainToZero() throws Exception {
         UnlockLicenseSimulator simulator = new UnlockLicenseSimulator();
@@ -293,6 +308,7 @@ class UnlockLicenseSimulatorTest {
 
     // ==================== TC-UNLOCK-013：unlock_license_update file 显式 null ====================
 
+    @DisplayName("TC-UNLOCK-013：unlock_license_update file 显式 null")
     @Test
     void updateWithExplicitNullFile() throws Exception {
         UnlockLicenseSimulator simulator = new UnlockLicenseSimulator();

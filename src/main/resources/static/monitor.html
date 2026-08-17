@@ -149,6 +149,55 @@
             color: var(--text-inverse);
         }
 
+        /* 标题栏下拉菜单按钮箭头 */
+        .header-dropdown-btn::after {
+            content: '▾';
+            margin-left: 4px;
+            font-size: 10px;
+            opacity: 0.6;
+        }
+
+        /* 标题栏纯CSS下拉菜单 */
+        .header-dropdown { position: relative; }
+        .header-dropdown-menu {
+            display: none;
+            position: absolute;
+            top: 100%;
+            right: 0;
+            margin-top: 4px;
+            background: #1e293b;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: var(--radius-md);
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+            min-width: 130px;
+            padding: 4px 0;
+            z-index: 100;
+        }
+        .header-dropdown:hover .header-dropdown-menu,
+        .header-dropdown:focus-within .header-dropdown-menu {
+            display: block;
+        }
+        .header-dropdown-item {
+            padding: 8px 16px;
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.85);
+            cursor: pointer;
+            white-space: nowrap;
+            transition: background 0.15s, color 0.15s;
+        }
+        .header-dropdown-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+            color: #fff;
+        }
+        .header-dropdown-item.is-disabled {
+            color: rgba(255, 255, 255, 0.3);
+            cursor: not-allowed;
+        }
+        .header-dropdown-item.is-disabled:hover {
+            background: transparent;
+            color: rgba(255, 255, 255, 0.3);
+        }
+
         /* 页面跳转链接 */
         .nav-link {
             color: rgba(255, 255, 255, 0.6);
@@ -556,11 +605,36 @@
         <div class="app-header-right">
             <el-button :type="monitorConnected ? 'danger' : 'primary'" size="small" @click="monitorConnected ? doMonitorDisconnect() : (showMonitorConnectDialog = true)">{{ monitorConnected ? '断开' : '连接到第三方平台' }}</el-button>
             <el-button size="small" @click="showDeviceSelectDialog = true" :disabled="!monitorConnected">选择设备</el-button>
-            <el-button size="small" @click="showFlightControlDialog = true" :disabled="!selectedDevice">飞行控制</el-button>
-            <el-button size="small" @click="showPayloadControlDialog = true" :disabled="!selectedDevice">负载控制</el-button>
-            <el-button size="small" @click="showDebugDialog = true" :disabled="!selectedDevice">远程调试</el-button>
-            <el-button size="small" @click="runDiagnosis" :disabled="logs.length === 0">诊断</el-button>
-            <el-button size="small" @click="openCoverageDialog">覆盖率报告</el-button>
+            <div class="header-dropdown">
+                <el-button size="small" class="header-dropdown-btn" :disabled="!selectedDevice">设备控制</el-button>
+                <div class="header-dropdown-menu">
+                    <div class="header-dropdown-item" @click="selectedDevice && (showFlightControlDialog = true)" :class="{ 'is-disabled': !selectedDevice }">飞行控制</div>
+                    <div class="header-dropdown-item" @click="selectedDevice && (showPayloadControlDialog = true)" :class="{ 'is-disabled': !selectedDevice }">负载控制</div>
+                    <div class="header-dropdown-item" @click="selectedDevice && (showDebugDialog = true)" :class="{ 'is-disabled': !selectedDevice }">远程调试</div>
+                </div>
+            </div>
+            <div class="header-dropdown">
+                <el-button size="small" class="header-dropdown-btn">诊断告警</el-button>
+                <div class="header-dropdown-menu">
+                    <div class="header-dropdown-item" @click="logs.length > 0 && runDiagnosis()" :class="{ 'is-disabled': logs.length === 0 }">诊断</div>
+                    <div class="header-dropdown-item" @click="openDiagnosticLogsDialog()">诊断日志</div>
+                    <div class="header-dropdown-item" @click="monitorConnected && openHmsDialog()" :class="{ 'is-disabled': !monitorConnected }">HMS 告警</div>
+                </div>
+            </div>
+            <div class="header-dropdown">
+                <el-button size="small" class="header-dropdown-btn" :disabled="!monitorConnected">任务媒体</el-button>
+                <div class="header-dropdown-menu">
+                    <div class="header-dropdown-item" @click="monitorConnected && openTaskDialog()" :class="{ 'is-disabled': !monitorConnected }">航线任务</div>
+                    <div class="header-dropdown-item" @click="monitorConnected && openLiveDialog()" :class="{ 'is-disabled': !monitorConnected }">直播流</div>
+                </div>
+            </div>
+            <div class="header-dropdown">
+                <el-button size="small" class="header-dropdown-btn">工具</el-button>
+                <div class="header-dropdown-menu">
+                    <div class="header-dropdown-item" @click="(monitorConnected && selectedDevice) && openCmdTemplateDialog()" :class="{ 'is-disabled': !monitorConnected || !selectedDevice }">指令模板</div>
+                    <div class="header-dropdown-item" @click="openCoverageDialog()">覆盖率报告</div>
+                </div>
+            </div>
             <a href="/" class="nav-link">模拟器</a>
         </div>
     </div>
@@ -575,6 +649,7 @@
                     <el-select v-model="topicFilter" multiple collapse-tags collapse-tags-tooltip size="small" placeholder="过滤 Topic（选中不显示）" style="width: 200px;">
                         <el-option v-for="t in topicOptions" :key="t" :label="t" :value="t"></el-option>
                     </el-select>
+                    <el-input v-model="searchKeyword" size="small" clearable placeholder="搜索 method/topic/内容" style="width: 200px;"></el-input>
                     <div class="panel-header-right">
                         <el-radio-group v-model="logFilter" size="small">
                             <el-radio-button label="all">全部</el-radio-button>
@@ -831,6 +906,129 @@
         </div>
     </el-dialog>
 
+    <!-- 诊断日志弹窗（P/S/M 诊断码记录） -->
+    <el-dialog v-model="showDiagnosticLogsDialog" title="诊断日志（P/S/M 诊断码）" width="720px" @open="loadDiagnosticLogs">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <div style="font-size: 13px; color: #475569;">
+                <el-tag type="danger" size="small">P</el-tag> 平台问题
+                <el-tag type="warning" size="small" style="margin-left: 8px;">S</el-tag> 模拟器问题
+                <el-tag type="info" size="small" style="margin-left: 8px;">M</el-tag> 待验证/监控
+                <span style="margin-left: 12px; color: #64748b;">共 {{ diagnosticLogs.length }} 条</span>
+            </div>
+            <el-button size="small" @click="clearDiagnosticLogs">清空</el-button>
+        </div>
+        <div v-if="diagnosticLogs.length === 0" style="color: #909399; padding: 24px; text-align: center;">暂无诊断日志</div>
+        <div v-for="(log, i) in diagnosticLogs" :key="i" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 10px; margin-bottom: 8px; font-size: 13px;">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+                <el-tag :type="diagnosticTagType(log.code)" size="small">{{ log.code }}</el-tag>
+                <span style="font-weight: 600; color: #1e293b;">{{ log.description }}</span>
+                <span style="color: #64748b; font-size: 12px;">/ {{ log.method }}</span>
+                <span style="margin-left: auto; color: #94a3b8; font-size: 12px;">{{ log.time }}</span>
+            </div>
+            <div style="color: #475569; line-height: 1.5;">{{ log.detail }}</div>
+        </div>
+    </el-dialog>
+
+    <!-- HMS 告警弹窗 -->
+    <el-dialog v-model="showHmsDialog" title="HMS 健康告警" width="780px" @open="loadHmsAlerts">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <div style="font-size: 13px; color: #475569;">
+                <el-tag type="danger" size="small">L2</el-tag> 警告
+                <el-tag type="warning" size="small" style="margin-left: 8px;">L1</el-tag> 提醒
+                <el-tag type="info" size="small" style="margin-left: 8px;">L0</el-tag> 通知
+                <span style="margin-left: 12px; color: #64748b;">共 {{ hmsTotalCount }} 条告警</span>
+            </div>
+            <el-button size="small" @click="loadHmsAlerts">刷新</el-button>
+        </div>
+        <div v-if="hmsTotalCount === 0" style="color: #909399; padding: 24px; text-align: center;">暂无活跃告警</div>
+        <div v-for="(alerts, sn) in hmsAlerts" :key="sn" style="margin-bottom: 16px;">
+            <div style="font-weight: 600; color: #1e293b; margin-bottom: 8px; font-size: 13px; word-break: break-all;">{{ sn }}</div>
+            <div v-for="(alert, i) in alerts" :key="i" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 10px; margin-bottom: 8px; font-size: 13px;">
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap;">
+                    <el-tag :type="hmsLevelTagType(alert.level)" size="small">L{{ alert.level }}</el-tag>
+                    <span style="font-weight: 600; color: #1e293b;">{{ alert.code }}</span>
+                    <el-tag v-if="alert.imminent === 1" type="warning" size="small">及时性</el-tag>
+                    <span style="color: #64748b; font-size: 12px;">/ {{ alert.device_type }}</span>
+                    <span v-if="alert.in_the_sky === 1" style="margin-left: auto; color: #94a3b8; font-size: 12px;">在空中</span>
+                </div>
+                <div style="color: #475569; font-size: 12px;">module: {{ alert.module }} / args: {{ JSON.stringify(alert.args) }}</div>
+            </div>
+        </div>
+    </el-dialog>
+
+    <!-- 航线任务监控弹窗 -->
+    <el-dialog v-model="showTaskDialog" title="航线任务监控" width="780px" @open="loadTaskProgress">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <div style="font-size: 13px; color: #475569;">
+                <el-tag type="primary" size="small">in_progress</el-tag> 执行中
+                <el-tag type="success" size="small" style="margin-left: 8px;">ok</el-tag> 完成
+                <el-tag type="warning" size="small" style="margin-left: 8px;">paused</el-tag> 暂停
+                <el-tag type="danger" size="small" style="margin-left: 8px;">failed</el-tag> 失败
+                <el-tag type="info" size="small" style="margin-left: 8px;">canceled</el-tag> 取消
+            </div>
+            <el-button size="small" @click="loadTaskProgress">刷新</el-button>
+        </div>
+        <div v-if="Object.keys(taskProgress).length === 0" style="color: #909399; padding: 24px; text-align: center;">暂无任务进度数据</div>
+        <div v-for="(task, sn) in taskProgress" :key="sn" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 12px; margin-bottom: 12px; font-size: 13px;">
+            <div style="font-weight: 600; color: #1e293b; margin-bottom: 8px; word-break: break-all;">{{ sn }}</div>
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;">
+                <el-tag :type="taskStatusTagType(task.status)" size="small">{{ task.status }}</el-tag>
+                <span style="color: #475569;">flight_id: {{ task.flight_id || '-' }}</span>
+                <span style="color: #64748b; font-size: 12px;">step: {{ task.current_step }}</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <span style="color: #64748b; font-size: 12px; min-width: 40px;">{{ task.percent }}%</span>
+                <el-progress :percentage="task.percent" :status="taskProgressStatus(task.status)" :show-text="false" style="flex: 1;"></el-progress>
+            </div>
+        </div>
+    </el-dialog>
+
+    <!-- 直播流监控弹窗 -->
+    <el-dialog v-model="showLiveDialog" title="直播流监控" width="780px" @open="loadLiveStreams">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <div style="font-size: 13px; color: #475569;">
+                <span>共 {{ liveStreamCount }} 路推流</span>
+            </div>
+            <el-button size="small" @click="loadLiveStreams">刷新</el-button>
+        </div>
+        <div v-if="liveStreamCount === 0" style="color: #909399; padding: 24px; text-align: center;">暂无活跃推流</div>
+        <div v-for="(streams, sn) in liveStreams" :key="sn" style="margin-bottom: 16px;">
+            <div style="font-weight: 600; color: #1e293b; margin-bottom: 8px; font-size: 13px; word-break: break-all;">{{ sn }}</div>
+            <div v-for="(stream, i) in streams" :key="i" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 10px; margin-bottom: 8px; font-size: 13px;">
+                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap;">
+                    <span style="font-weight: 600; color: #1e293b;">{{ stream.video_id }}</span>
+                    <el-tag type="primary" size="small">{{ urlTypeLabel(stream.url_type) }}</el-tag>
+                    <el-tag type="success" size="small">{{ stream.video_type }}</el-tag>
+                    <span style="color: #64748b; font-size: 12px;">Q{{ stream.video_quality }}</span>
+                </div>
+                <div style="color: #475569; font-size: 12px; word-break: break-all;">{{ stream.url }}</div>
+            </div>
+        </div>
+    </el-dialog>
+
+    <!-- 指令模板库弹窗 -->
+    <el-dialog v-model="showCmdTemplateDialog" title="指令模板库" width="680px">
+        <div style="margin-bottom: 12px;">
+            <div style="font-size: 13px; color: #475569; margin-bottom: 8px;">选择模板：</div>
+            <el-select v-model="selectedTemplateKey" placeholder="请选择指令模板" style="width: 100%" @change="onTemplateSelected">
+                <el-option-group v-for="group in cmdTemplateGroups" :key="group.label" :label="group.label">
+                    <el-option v-for="tpl in group.items" :key="tpl.key" :label="tpl.label + ' (' + tpl.method + ')'" :value="tpl.key"></el-option>
+                </el-option-group>
+            </el-select>
+        </div>
+        <div style="margin-bottom: 12px;">
+            <div style="font-size: 13px; color: #475569; margin-bottom: 4px;">method：</div>
+            <el-input v-model="cmdTemplateMethod" size="small" readonly></el-input>
+        </div>
+        <div style="margin-bottom: 12px;">
+            <div style="font-size: 13px; color: #475569; margin-bottom: 4px;">data（可编辑）：</div>
+            <el-input v-model="cmdTemplateData" type="textarea" :rows="8" size="small" placeholder='{"key": "value"}'></el-input>
+        </div>
+        <div style="text-align: right;">
+            <el-button size="small" type="primary" @click="sendCmdTemplate" :disabled="!cmdTemplateMethod">下发指令</el-button>
+        </div>
+    </el-dialog>
+
     <!-- 覆盖率报告 弹窗 -->
     <el-dialog v-model="showCoverageDialog" title="DJI Cloud API 覆盖率报告" width="560px" @open="loadCoverageHosts">
         <div style="margin-bottom: 16px;">
@@ -934,10 +1132,70 @@ createApp({
         const coverageSelectedHost = ref('');
         const coverageData = ref(null);
 
+        // 诊断日志（P/S/M 诊断码记录）
+        const showDiagnosticLogsDialog = ref(false);
+        const diagnosticLogs = ref([]);
+
+        // HMS 告警
+        const showHmsDialog = ref(false);
+        const hmsAlerts = ref({});
+        const hmsTotalCount = ref(0);
+
+        // 航线任务进度
+        const showTaskDialog = ref(false);
+        const taskProgress = ref({});
+
+        // 直播流监控
+        const showLiveDialog = ref(false);
+        const liveStreams = ref({});
+        const liveStreamCount = ref(0);
+
+        // 指令模板库
+        const showCmdTemplateDialog = ref(false);
+        const selectedTemplateKey = ref('');
+        const cmdTemplateMethod = ref('');
+        const cmdTemplateData = ref('');
+        const cmdTemplateGroups = [
+            {
+                label: '机场控制', items: [
+                    { key: 'cover_open', label: '开舱盖', method: 'cover_open', data: '{}' },
+                    { key: 'cover_close', label: '关舱盖', method: 'cover_close', data: '{}' },
+                    { key: 'putter_expand', label: '推杆展开', method: 'putter_expand', data: '{}' },
+                    { key: 'putter_close', label: '推杆收起', method: 'putter_close', data: '{}' },
+                    { key: 'charge_open', label: '开始充电', method: 'charge_open', data: '{}' },
+                    { key: 'charge_close', label: '停止充电', method: 'charge_close', data: '{}' },
+                    { key: 'device_reboot', label: '设备重启', method: 'device_reboot', data: '{}' },
+                ]
+            },
+            {
+                label: '飞行任务', items: [
+                    { key: 'flighttask_prepare', label: '任务准备', method: 'flighttask_prepare', data: '{\n  "flight_id": "",\n  "task_type": 0,\n  "wayline_type": 0,\n  "file": {\n    "url": "",\n    "fingerprint": ""\n  },\n  "rth_altitude": 100,\n  "out_of_control_action": 0,\n  "exit_wayline_when_rc_lost": 0\n}' },
+                    { key: 'flighttask_execute', label: '任务执行', method: 'flighttask_execute', data: '{\n  "flight_id": ""\n}' },
+                    { key: 'flighttask_pause', label: '任务暂停', method: 'flighttask_pause', data: '{}' },
+                    { key: 'flighttask_recovery', label: '任务恢复', method: 'flighttask_recovery', data: '{}' },
+                    { key: 'return_home', label: '返航', method: 'return_home', data: '{}' },
+                ]
+            },
+            {
+                label: '直播控制', items: [
+                    { key: 'live_start_push', label: '开始推流', method: 'live_start_push', data: '{\n  "video_id": "1581F5BMD-0-0",\n  "url": "rtmp://example.com/live/test",\n  "url_type": 1,\n  "video_quality": 0\n}' },
+                    { key: 'live_stop_push', label: '停止推流', method: 'live_stop_push', data: '{\n  "video_id": "1581F5BMD-0-0"\n}' },
+                    { key: 'live_lens_change', label: '切换镜头', method: 'live_lens_change', data: '{\n  "video_id": "1581F5BMD-0-0",\n  "video_type": "normal"\n}' },
+                    { key: 'live_set_quality', label: '设置质量', method: 'live_set_quality', data: '{\n  "video_quality": 0\n}' },
+                ]
+            },
+            {
+                label: '属性设置', items: [
+                    { key: 'silent_mode', label: '静音模式', method: 'property_set', data: '{\n  "silent_mode": 1\n}' },
+                ]
+            },
+        ];
+
         // 指令通讯窗口
         const logs = ref([]);
         const logFilter = ref('all');
         const autoScroll = ref(true);
+        const searchKeyword = ref('');
         const expandedLogs = reactive(new Set());
         const logContainer = ref(null);
         const showMsgDrawer = ref(false);
@@ -1638,9 +1896,119 @@ createApp({
             await refreshMonitorLogs();
         }
 
+        // ==================== 诊断日志 ====================
+        async function loadDiagnosticLogs() {
+            const data = await fetchJSON('/api/monitor/diagnostic-logs');
+            diagnosticLogs.value = data?.logs || [];
+        }
+        async function clearDiagnosticLogs() {
+            await fetchJSON('/api/monitor/diagnostic-logs', { method: 'DELETE' });
+            diagnosticLogs.value = [];
+        }
+        function openDiagnosticLogsDialog() {
+            showDiagnosticLogsDialog.value = true;
+        }
+        function diagnosticTagType(code) {
+            if (code && code.startsWith('P')) return 'danger';
+            if (code && code.startsWith('S')) return 'warning';
+            if (code && code.startsWith('M')) return 'info';
+            return '';
+        }
+
+        // ==================== HMS 告警 ====================
+        async function loadHmsAlerts() {
+            const data = await fetchJSON('/api/monitor/hms-alerts');
+            hmsAlerts.value = data?.data || {};
+            hmsTotalCount.value = data?.total || 0;
+        }
+        function openHmsDialog() {
+            showHmsDialog.value = true;
+        }
+        function hmsLevelTagType(level) {
+            if (level === 2) return 'danger';
+            if (level === 1) return 'warning';
+            return 'info';
+        }
+
+        // ==================== 航线任务监控 ====================
+        async function loadTaskProgress() {
+            const data = await fetchJSON('/api/monitor/task-progress');
+            taskProgress.value = data?.data || {};
+        }
+        function openTaskDialog() {
+            showTaskDialog.value = true;
+        }
+        function taskStatusTagType(status) {
+            if (status === 'ok') return 'success';
+            if (status === 'paused') return 'warning';
+            if (status === 'failed') return 'danger';
+            if (status === 'canceled') return 'info';
+            return 'primary';
+        }
+        function taskProgressStatus(status) {
+            if (status === 'ok') return 'success';
+            if (status === 'failed') return 'exception';
+            if (status === 'paused' || status === 'canceled') return 'warning';
+            return undefined;
+        }
+
+        // ==================== 直播流监控 ====================
+        async function loadLiveStreams() {
+            const data = await fetchJSON('/api/monitor/live-streams');
+            liveStreams.value = data?.data || {};
+            liveStreamCount.value = data?.total || 0;
+        }
+        function openLiveDialog() {
+            showLiveDialog.value = true;
+        }
+        function urlTypeLabel(urlType) {
+            const labels = { 0: 'Unknown', 1: 'RTMP', 2: 'RTSP', 3: 'GB28181', 4: 'WebRTC' };
+            return labels[urlType] || ('Type' + urlType);
+        }
+
+        // ==================== 指令模板库 ====================
+        function openCmdTemplateDialog() {
+            showCmdTemplateDialog.value = true;
+        }
+        function onTemplateSelected(key) {
+            for (const group of cmdTemplateGroups) {
+                const tpl = group.items.find(t => t.key === key);
+                if (tpl) {
+                    cmdTemplateMethod.value = tpl.method;
+                    cmdTemplateData.value = tpl.data;
+                    return;
+                }
+            }
+        }
+        async function sendCmdTemplate() {
+            const sn = selectedDevice.value;
+            if (!sn || !cmdTemplateMethod.value) return;
+            let data;
+            try {
+                data = cmdTemplateData.value.trim() ? JSON.parse(cmdTemplateData.value) : {};
+            } catch (e) {
+                ElementPlus.ElMessage.error('data JSON 格式错误: ' + e.message);
+                return;
+            }
+            const isPropertySet = cmdTemplateMethod.value === 'property_set';
+            const url = isPropertySet ? '/api/monitor/property-set' : '/api/monitor/command';
+            const body = isPropertySet ? { sn, data } : { sn, method: cmdTemplateMethod.value, data };
+            const result = await fetchJSON(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body),
+            });
+            if (result?.success) {
+                ElementPlus.ElMessage.success('指令已下发: ' + (isPropertySet ? 'property_set' : cmdTemplateMethod.value));
+            } else {
+                ElementPlus.ElMessage.error('下发失败: ' + (result?.message || '未知错误'));
+            }
+        }
+
         const filteredLogs = computed(() => {
             const gatewaySn = selectedDevice.value;
             const droneSn = currentDevice.value?.droneSn;
+            const kw = searchKeyword.value.trim().toLowerCase();
             return logs.value.filter(l => {
                 const topic = String(l.topic || '');
                 // 只显示选中网关的消息（机场 SN 或无人机 SN）
@@ -1648,6 +2016,12 @@ createApp({
                 if (logFilter.value !== 'all' && l.direction !== logFilter.value) return false;
                 if (topicFilter.value.length > 0) {
                     if (topicFilter.value.some(f => topic.endsWith('/' + f.replace(' ', '/')))) return false;
+                }
+                // 关键字搜索：匹配 method、topic、payload
+                if (kw) {
+                    const method = String(l.method || '').toLowerCase();
+                    const payload = String(l.payload || '').toLowerCase();
+                    if (!method.includes(kw) && !topic.toLowerCase().includes(kw) && !payload.includes(kw)) return false;
                 }
                 return true;
             });
@@ -1713,11 +2087,17 @@ createApp({
             doMonitorConnect, doMonitorDisconnect, onDeviceSelect,
             sendFlightCmd, sendDockCmd, sendSilentMode, silentMode,
             runDiagnosis, showDiagnosisDialog, diagnosisResult, pairsExpanded,
-            logs, logFilter, autoScroll, expandedLogs, logContainer,
+            logs, logFilter, autoScroll, searchKeyword, expandedLogs, logContainer,
             topicFilter, topicOptions, filteredLogs,
             showMsgDrawer, currentMessage, formattedPayload, payloadTruncated,
             openMessageDetail, copyPayload, clearLogs,
             showCoverageDialog, coverageHosts, coverageSelectedHost, coverageData, coverageRateText,
+            showDiagnosticLogsDialog, diagnosticLogs, loadDiagnosticLogs, clearDiagnosticLogs, openDiagnosticLogsDialog, diagnosticTagType,
+            showHmsDialog, hmsAlerts, hmsTotalCount, loadHmsAlerts, openHmsDialog, hmsLevelTagType,
+            showTaskDialog, taskProgress, loadTaskProgress, openTaskDialog, taskStatusTagType, taskProgressStatus,
+            showLiveDialog, liveStreams, liveStreamCount, loadLiveStreams, openLiveDialog, urlTypeLabel,
+            showCmdTemplateDialog, selectedTemplateKey, cmdTemplateMethod, cmdTemplateData, cmdTemplateGroups,
+            openCmdTemplateDialog, onTemplateSelected, sendCmdTemplate,
             openCoverageDialog, loadCoverageHosts, loadCoverageData, downloadCoverageReport,
         };
     }

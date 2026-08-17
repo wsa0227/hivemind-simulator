@@ -18,10 +18,23 @@ package ltd.cdmi.hivemind.simulator.handler;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
+import ltd.cdmi.dji.cloudapi.sdk.codec.MessageCodec;
+import ltd.cdmi.dji.cloudapi.sdk.command.drc.camera.DrcCameraDenoiseLevelSetRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.drc.camera.DrcCameraNightModeSetRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.drc.camera.DrcCameraNightVisionEnableRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.drc.camera.DrcInfraredFillLightEnableRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.drc.light.DrcLightBrightnessSetRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.drc.light.DrcLightFineTuningSetRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.drc.light.DrcLightModeSetRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.drc.speaker.DrcSpeakerPlayModeSetRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.drc.speaker.DrcSpeakerPlayVolumeSetRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.drc.speaker.DrcSpeakerTtsSetRequest;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.DrcMethod;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.ServiceMethod;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
 import ltd.cdmi.hivemind.simulator.device.DeviceState;
-import ltd.cdmi.hivemind.simulator.device.DeviceType;
+import ltd.cdmi.dji.cloudapi.sdk.model.DockModel;
 import ltd.cdmi.hivemind.simulator.diagnostic.CoverageRecorder;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticCode;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticLogRecorder;
@@ -44,14 +57,20 @@ import java.util.function.Function;
  * DRC 远程控制指令路由与应答处理器。
  * <p>订阅 thing/product/{gateway_sn}/drc/down，按 method 路由到对应处理器，统一回 drc/up。
  * <p>DRC 消息格式：{@code {method, data, seq}}（与 OSD 的 {tid, bid, timestamp, data} 不同）。
- * <p>详见 DJI Cloud API <a href="https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock3/remote-control.html">Dock3 远程控制</a>。
+ * <p>详见 DJI Cloud API <a href="https://developer.dji.com/doc/cloud-api-tutorial/cn/api-reference/dock-to-cloud/mqtt/dock/dock2/remote-control.html">Dock2 远程控制</a>。
  */
 @Component
 public class DrcCommandHandler {
 
     private static final Logger log = LoggerFactory.getLogger(DrcCommandHandler.class);
 
-    /** 无人机 mode_code：降落中（DJI 飞行器 mode_code=12） */
+    /**
+     * 无人机 mode_code：降落中。
+     * <p>待确认：DJI 文档中 10=自动降落、11=强制降落、12=三桨叶降落。
+     * drc_force_landing（强制降落）可能应对应 11=强制降落，
+     * drc_emergency_landing（紧急降落）可能应对应 10=自动降落，
+     * 当前统一使用 12，文档未明确各 DRC 降落指令对应的 mode_code，待真机验证。
+     */
     private static final int DRONE_MODE_LANDING = 12;
     /** 无人机 mode_code：待机（DJI 飞行器 mode_code=0） */
     private static final int DRONE_MODE_STANDBY = 0;
@@ -119,25 +138,46 @@ public class DrcCommandHandler {
     /**
      * 注册 Phase 2 飞行安全指令处理器。
      * <p>三个指令格式一致：请求 data 为空，回复 data 为 {result:0}。</p>
+     * <p>drc_force_landing/drc_emergency_landing 文档来源：Dock2 remote-control.html，
+     * Dock3 文档（drc.html + remote-control.html）中未找到，Dock1 remote-control.html 无法访问待确认。
+     * 模拟器对所有 Dock 类型均处理，Dock3 收到时记录 M-2 诊断待真机验证。</p>
      */
     private void registerSafetyHandlers() {
         // drc_force_landing：强制降落（无视障碍物直接降落）
-        registerHandler("drc_force_landing", data -> {
+        // 文档来源：Dock2 remote-control.html#强制降落
+        registerHandler(DrcMethod.DRC_FORCE_LANDING.methodName(), data -> {
             state.setDroneModeCode(DRONE_MODE_LANDING);
+            // M-2：mode_code=12(三桨叶降落)待确认，DJI文档中 11=强制降落，待真机验证
+            diagnosticRecorder.record(DiagnosticCode.MONITOR_SIMULATOR_INFERENCE, DrcMethod.DRC_FORCE_LANDING.methodName(),
+                    "mode_code=12(三桨叶降落)，DJI文档中 11=强制降落，文档未明确 DRC 强制降落对应的 mode_code，待真机验证");
+            // M-2：Dock3 文档中未找到 drc_force_landing，待真机验证
+            if (runtimeConfig.getDockType() == DockModel.DOCK3) {
+                diagnosticRecorder.record(DiagnosticCode.MONITOR_SIMULATOR_INFERENCE, DrcMethod.DRC_FORCE_LANDING.methodName(),
+                        "Dock3 文档（drc.html + remote-control.html）中未找到此方法，待真机验证");
+            }
             log.info("DRC 强制降落：飞行器进入降落状态");
             return success();
         });
 
         // drone_emergency_stop：急停（取消降落/飞行，电机停止）
-        registerHandler("drone_emergency_stop", data -> {
+        registerHandler(DrcMethod.DRONE_EMERGENCY_STOP.methodName(), data -> {
             state.setDroneModeCode(DRONE_MODE_STANDBY);
             log.info("DRC 急停：飞行器停止");
             return success();
         });
 
         // drc_emergency_landing：紧急降落（受避障影响可能中止）
-        registerHandler("drc_emergency_landing", data -> {
+        // 文档来源：Dock2 remote-control.html#紧急降落
+        registerHandler(DrcMethod.DRC_EMERGENCY_LANDING.methodName(), data -> {
             state.setDroneModeCode(DRONE_MODE_LANDING);
+            // M-2：mode_code=12(三桨叶降落)待确认，DJI文档中 10=自动降落，待真机验证
+            diagnosticRecorder.record(DiagnosticCode.MONITOR_SIMULATOR_INFERENCE, DrcMethod.DRC_EMERGENCY_LANDING.methodName(),
+                    "mode_code=12(三桨叶降落)，DJI文档中 10=自动降落，文档未明确 DRC 紧急降落对应的 mode_code，待真机验证");
+            // M-2：Dock3 文档中未找到 drc_emergency_landing，待真机验证
+            if (runtimeConfig.getDockType() == DockModel.DOCK3) {
+                diagnosticRecorder.record(DiagnosticCode.MONITOR_SIMULATOR_INFERENCE, DrcMethod.DRC_EMERGENCY_LANDING.methodName(),
+                        "Dock3 文档（drc.html + remote-control.html）中未找到此方法，待真机验证");
+            }
             log.info("DRC 紧急降落：飞行器进入降落状态");
             return success();
         });
@@ -149,32 +189,36 @@ public class DrcCommandHandler {
      */
     private void registerCameraAdvancedHandlers() {
         // drc_camera_night_mode_set：夜景模式设置
-        registerHandler("drc_camera_night_mode_set", data -> {
-            int mode = data.path("mode").asInt();
+        registerHandler(DrcMethod.DRC_CAMERA_NIGHT_MODE_SET.methodName(), data -> {
+            var req = MessageCodec.fromJson(data.toString(), DrcCameraNightModeSetRequest.class);
+            int mode = req.mode();
             state.setNightMode(mode);
             log.info("DRC 夜景模式设置: mode={} (0=关闭,1=开启,2=自动)", mode);
             return success();
         });
 
         // drc_camera_denoise_level_set：降噪等级设置
-        registerHandler("drc_camera_denoise_level_set", data -> {
-            int level = data.path("level").asInt();
+        registerHandler(DrcMethod.DRC_CAMERA_DENOISE_LEVEL_SET.methodName(), data -> {
+            var req = MessageCodec.fromJson(data.toString(), DrcCameraDenoiseLevelSetRequest.class);
+            int level = req.level();
             state.setDenoiseLevel(level);
             log.info("DRC 降噪等级设置: level={} (2=增强15fps,3=超强5fps)", level);
             return success();
         });
 
         // drc_camera_night_vision_enable：黑白夜视使能
-        registerHandler("drc_camera_night_vision_enable", data -> {
-            boolean enable = data.path("enable").asBoolean();
+        registerHandler(DrcMethod.DRC_CAMERA_NIGHT_VISION_ENABLE.methodName(), data -> {
+            var req = MessageCodec.fromJson(data.toString(), DrcCameraNightVisionEnableRequest.class);
+            boolean enable = req.enable();
             state.setNightVisionEnable(enable);
             log.info("DRC 黑白夜视: enable={}", enable);
             return success();
         });
 
         // drc_infrared_fill_light_enable：近红外补光使能
-        registerHandler("drc_infrared_fill_light_enable", data -> {
-            boolean enable = data.path("enable").asBoolean();
+        registerHandler(DrcMethod.DRC_INFRARED_FILL_LIGHT_ENABLE.methodName(), data -> {
+            var req = MessageCodec.fromJson(data.toString(), DrcInfraredFillLightEnableRequest.class);
+            boolean enable = req.enable();
             state.setInfraredFillLightEnable(enable);
             log.info("DRC 近红外补光: enable={}", enable);
             return success();
@@ -187,25 +231,28 @@ public class DrcCommandHandler {
      */
     private void registerLightHandlers() {
         // drc_light_brightness_set：探照灯亮度设置
-        registerHandler("drc_light_brightness_set", data -> {
-            int brightness = data.path("brightness").asInt();
+        registerHandler(DrcMethod.DRC_LIGHT_BRIGHTNESS_SET.methodName(), data -> {
+            var req = MessageCodec.fromJson(data.toString(), DrcLightBrightnessSetRequest.class);
+            int brightness = req.brightness();
             state.setLightBrightness(brightness);
             log.info("DRC 探照灯亮度: brightness={}", brightness);
             return success();
         });
 
         // drc_light_mode_set：探照灯模式设置
-        registerHandler("drc_light_mode_set", data -> {
-            int mode = data.path("mode").asInt();
+        registerHandler(DrcMethod.DRC_LIGHT_MODE_SET.methodName(), data -> {
+            var req = MessageCodec.fromJson(data.toString(), DrcLightModeSetRequest.class);
+            int mode = req.mode();
             state.setLightMode(mode);
             log.info("DRC 探照灯模式: mode={} (0=关闭,1=常亮,2=爆闪,3=快速爆闪,4=交替爆闪)", mode);
             return success();
         });
 
         // drc_light_fine_tuning_set：探照灯左右角度微调
-        registerHandler("drc_light_fine_tuning_set", data -> {
-            int position = data.path("position").asInt();  // 0=左灯, 1=右灯
-            int value = data.path("value").asInt();
+        registerHandler(DrcMethod.DRC_LIGHT_FINE_TUNING_SET.methodName(), data -> {
+            var req = MessageCodec.fromJson(data.toString(), DrcLightFineTuningSetRequest.class);
+            int position = req.position();  // 0=左灯, 1=右灯
+            int value = req.value();
             if (position == 0) {
                 state.setLightLeftAngle(value);
                 log.info("DRC 探照灯左灯角度: value={}", value);
@@ -217,7 +264,7 @@ public class DrcCommandHandler {
         });
 
         // drc_light_calibration：探照灯云台校准
-        registerHandler("drc_light_calibration", data -> {
+        registerHandler(DrcMethod.DRC_LIGHT_CALIBRATION.methodName(), data -> {
             log.info("DRC 探照灯云台校准执行");
             return success();
         });
@@ -229,19 +276,21 @@ public class DrcCommandHandler {
      */
     private void registerSpeakerHandlers() {
         // drc_speaker_play_mode_set：喊话器播放模式设置
-        registerHandler("drc_speaker_play_mode_set", data -> {
-            int playMode = data.path("play_mode").asInt();
+        registerHandler(DrcMethod.DRC_SPEAKER_PLAY_MODE_SET.methodName(), data -> {
+            var req = MessageCodec.fromJson(data.toString(), DrcSpeakerPlayModeSetRequest.class);
+            int playMode = req.playMode();
             state.setSpeakerPlayMode(playMode);
             log.info("DRC 喊话器播放模式: play_mode={} (0=单次,1=循环)", playMode);
             return success();
         });
 
         // drc_speaker_tts_set：喊话器TTS喊话设置
-        registerHandler("drc_speaker_tts_set", data -> {
-            int volume = data.path("volume").asInt();
-            int type = data.path("type").asInt();
-            int language = data.path("language").asInt();
-            int speed = data.path("speed").asInt();
+        registerHandler(DrcMethod.DRC_SPEAKER_TTS_SET.methodName(), data -> {
+            var req = MessageCodec.fromJson(data.toString(), DrcSpeakerTtsSetRequest.class);
+            int volume = req.volume();
+            int type = req.type();
+            int language = req.language();
+            int speed = req.speed();
             state.setSpeakerVolume(volume);
             state.setSpeakerPlaying(true);
             log.info("DRC 喊话器TTS: volume={}, type={} (0=男,1=女), language={} (0=中,1=英), speed={}",
@@ -250,22 +299,23 @@ public class DrcCommandHandler {
         });
 
         // drc_speaker_play_volume_set：喊话器音量设置
-        registerHandler("drc_speaker_play_volume_set", data -> {
-            int volume = data.path("play_volume").asInt();
+        registerHandler(DrcMethod.DRC_SPEAKER_PLAY_VOLUME_SET.methodName(), data -> {
+            var req = MessageCodec.fromJson(data.toString(), DrcSpeakerPlayVolumeSetRequest.class);
+            int volume = req.playVolume();
             state.setSpeakerVolume(volume);
             log.info("DRC 喊话器音量: play_volume={}", volume);
             return success();
         });
 
         // drc_speaker_play_stop：喊话器停止播放
-        registerHandler("drc_speaker_play_stop", data -> {
+        registerHandler(DrcMethod.DRC_SPEAKER_PLAY_STOP.methodName(), data -> {
             state.setSpeakerPlaying(false);
             log.info("DRC 喊话器停止播放");
             return success();
         });
 
         // drc_speaker_replay：喊话器重新播放
-        registerHandler("drc_speaker_replay", data -> {
+        registerHandler(DrcMethod.DRC_SPEAKER_REPLAY.methodName(), data -> {
             state.setSpeakerPlaying(true);
             log.info("DRC 喊话器重新播放");
             return success();
@@ -283,7 +333,7 @@ public class DrcCommandHandler {
      */
     private void registerFlightControlHandlers() {
         // stick_control：DRC-杆量控制（无回包机制）
-        registerHandler("stick_control", data -> {
+        registerHandler(DrcMethod.STICK_CONTROL.methodName(), data -> {
             int roll = data.path("roll").asInt();
             int pitch = data.path("pitch").asInt();
             int throttle = data.path("throttle").asInt();
@@ -293,8 +343,8 @@ public class DrcCommandHandler {
         });
 
         // drone_control：DRC-飞行控制（Dock1 有效，Dock2/Dock3 已废弃）
-        registerHandler("drone_control", data -> {
-            if (runtimeConfig.getDockType() == DeviceType.DOCK1) {
+        registerHandler(DrcMethod.DRONE_CONTROL.methodName(), data -> {
+            if (runtimeConfig.getDockType() == DockModel.DOCK1) {
                 int seq = data.path("seq").asInt();
                 double x = data.path("x").asDouble();
                 double y = data.path("y").asDouble();
@@ -304,13 +354,13 @@ public class DrcCommandHandler {
                 return null;  // 成功不回包
             }
             log.warn("[P-9] 平台调用了废弃接口 drone_control（DRC-飞行控制），建议使用 stick_control 替代");
-            diagnosticRecorder.record(DiagnosticCode.PLATFORM_DEPRECATED_API_CALLED, "drone_control",
+            diagnosticRecorder.record(DiagnosticCode.PLATFORM_DEPRECATED_API_CALLED, DrcMethod.DRONE_CONTROL.methodName(),
                     "平台调用了废弃接口 drone_control，DJI 建议使用 stick_control 替代");
             return null;  // 废弃接口，不回包
         });
 
         // heart_beat：DRC-心跳（回包回显 timestamp，seq 由 DrcMessage.reply 在顶层处理）
-        registerHandler("heart_beat", data -> {
+        registerHandler(DrcMethod.HEART_BEAT.methodName(), data -> {
             long timestamp = data.path("timestamp").asLong();
             log.info("DRC 心跳: timestamp={}", timestamp);
             Map<String, Object> result = new LinkedHashMap<>();
@@ -319,13 +369,13 @@ public class DrcCommandHandler {
         });
 
         // drc_initial_state_subscribe：DRC初始状态订阅（data=null，回 result=0）
-        registerHandler("drc_initial_state_subscribe", data -> {
+        registerHandler(DrcMethod.DRC_INITIAL_STATE_SUBSCRIBE.methodName(), data -> {
             log.info("DRC 初始状态订阅");
             return success();
         });
 
         // drc_camera_dewarping_set：镜头去畸变设置
-        registerHandler("drc_camera_dewarping_set", data -> {
+        registerHandler(DrcMethod.DRC_CAMERA_DEWARPING_SET.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             String cameraType = data.path("camera_type").asText();
             int dewarpingState = data.path("dewarping_state").asInt();
@@ -335,7 +385,7 @@ public class DrcCommandHandler {
         });
 
         // drc_camera_mechanical_shutter_set：机械快门设置
-        registerHandler("drc_camera_mechanical_shutter_set", data -> {
+        registerHandler(DrcMethod.DRC_CAMERA_MECHANICAL_SHUTTER_SET.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             String cameraType = data.path("camera_type").asText();
             int shutterState = data.path("mechanical_shutter_state").asInt();
@@ -345,7 +395,7 @@ public class DrcCommandHandler {
         });
 
         // drc_camera_iso_set：ISO设置
-        registerHandler("drc_camera_iso_set", data -> {
+        registerHandler(DrcMethod.DRC_CAMERA_ISO_SET.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             String cameraType = data.path("camera_type").asText();
             int isoValue = data.path("iso_value").asInt();
@@ -355,7 +405,7 @@ public class DrcCommandHandler {
         });
 
         // drc_camera_shutter_set：相机快门设置
-        registerHandler("drc_camera_shutter_set", data -> {
+        registerHandler(DrcMethod.DRC_CAMERA_SHUTTER_SET.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             String cameraType = data.path("camera_type").asText();
             int shutterValue = data.path("shutter_value").asInt();
@@ -365,7 +415,7 @@ public class DrcCommandHandler {
         });
 
         // drc_camera_aperture_value_set：相机光圈设置
-        registerHandler("drc_camera_aperture_value_set", data -> {
+        registerHandler(DrcMethod.DRC_CAMERA_APERTURE_VALUE_SET.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             String cameraType = data.path("camera_type").asText();
             int apertureValue = data.path("aperture_value").asInt();
@@ -375,7 +425,7 @@ public class DrcCommandHandler {
         });
 
         // drc_stealth_state_set：隐蔽模式设置（保存到 state，影响 drc_drone_state_push）
-        registerHandler("drc_stealth_state_set", data -> {
+        registerHandler(DrcMethod.DRC_STEALTH_STATE_SET.methodName(), data -> {
             int stealthState = data.path("stealth_state").asInt();
             state.setStealthState(stealthState == 1);
             log.info("DRC 隐蔽模式: stealth_state={} (0=关闭,1=开启)", stealthState);
@@ -383,7 +433,7 @@ public class DrcCommandHandler {
         });
 
         // drc_night_lights_state_set：夜航灯设置（保存到 state，影响 drc_drone_state_push）
-        registerHandler("drc_night_lights_state_set", data -> {
+        registerHandler(DrcMethod.DRC_NIGHT_LIGHTS_STATE_SET.methodName(), data -> {
             int nightLightsState = data.path("night_lights_state").asInt();
             state.setNightLightsState(nightLightsState == 1);
             log.info("DRC 夜航灯: night_lights_state={} (0=关闭,1=开启)", nightLightsState);
@@ -391,7 +441,7 @@ public class DrcCommandHandler {
         });
 
         // drc_interval_photo_set：定时拍照间隔设置
-        registerHandler("drc_interval_photo_set", data -> {
+        registerHandler(DrcMethod.DRC_INTERVAL_PHOTO_SET.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             String interval = data.path("interval").asText();
             log.info("DRC 定时拍照: payload_index={}, interval={}s", payloadIndex, interval);
@@ -399,7 +449,7 @@ public class DrcCommandHandler {
         });
 
         // drc_photo_storage_set：照片存储设置
-        registerHandler("drc_photo_storage_set", data -> {
+        registerHandler("drc_" + ServiceMethod.PHOTO_STORAGE_SET.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             List<String> settings = new ArrayList<>();
             data.path("photo_storage_settings").forEach(node -> settings.add(node.asText()));
@@ -408,7 +458,7 @@ public class DrcCommandHandler {
         });
 
         // drc_video_storage_set：视频存储设置
-        registerHandler("drc_video_storage_set", data -> {
+        registerHandler("drc_" + ServiceMethod.VIDEO_STORAGE_SET.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             List<String> settings = new ArrayList<>();
             data.path("video_storage_settings").forEach(node -> settings.add(node.asText()));
@@ -417,7 +467,7 @@ public class DrcCommandHandler {
         });
 
         // drc_video_resolution_set：视频分辨率设置
-        registerHandler("drc_video_resolution_set", data -> {
+        registerHandler(DrcMethod.DRC_VIDEO_RESOLUTION_SET.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             String resolution = data.path("video_resolution").asText();
             log.info("DRC 视频分辨率: payload_index={}, video_resolution={}", payloadIndex, resolution);
@@ -425,7 +475,7 @@ public class DrcCommandHandler {
         });
 
         // drc_linkage_zoom_set：红外联动变焦（仅 M3TD）
-        registerHandler("drc_linkage_zoom_set", data -> {
+        registerHandler(DrcMethod.DRC_LINKAGE_ZOOM_SET.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             boolean linkageState = data.path("state").asBoolean();
             log.info("DRC 红外联动变焦: payload_index={}, state={}", payloadIndex, linkageState);
@@ -433,7 +483,7 @@ public class DrcCommandHandler {
         });
 
         // drc_camera_mode_switch：切换相机模式（保存到 state，影响 drc_camera_state_push）
-        registerHandler("drc_camera_mode_switch", data -> {
+        registerHandler("drc_" + ServiceMethod.CAMERA_MODE_SWITCH.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             int cameraMode = data.path("camera_mode").asInt();
             state.setCameraMode(cameraMode);
@@ -443,7 +493,7 @@ public class DrcCommandHandler {
         });
 
         // drc_camera_recording_start：开始录像（保存到 state，影响 drc_camera_state_push）
-        registerHandler("drc_camera_recording_start", data -> {
+        registerHandler("drc_" + ServiceMethod.CAMERA_RECORDING_START.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             state.setRecordingState(1);
             log.info("DRC 开始录像: payload_index={}", payloadIndex);
@@ -451,7 +501,7 @@ public class DrcCommandHandler {
         });
 
         // drc_camera_recording_stop：停止录像（保存到 state，影响 drc_camera_state_push）
-        registerHandler("drc_camera_recording_stop", data -> {
+        registerHandler("drc_" + ServiceMethod.CAMERA_RECORDING_STOP.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             state.setRecordingState(0);
             log.info("DRC 停止录像: payload_index={}", payloadIndex);
@@ -459,7 +509,7 @@ public class DrcCommandHandler {
         });
 
         // drc_camera_screen_drag：画面拖动控制
-        registerHandler("drc_camera_screen_drag", data -> {
+        registerHandler("drc_" + ServiceMethod.CAMERA_SCREEN_DRAG.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             boolean locked = data.path("locked").asBoolean();
             double pitchSpeed = data.path("pitch_speed").asDouble();
@@ -470,7 +520,7 @@ public class DrcCommandHandler {
         });
 
         // drc_camera_aim：双击成为 AIM
-        registerHandler("drc_camera_aim", data -> {
+        registerHandler("drc_" + ServiceMethod.CAMERA_AIM.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             String cameraType = data.path("camera_type").asText();
             boolean locked = data.path("locked").asBoolean();
@@ -482,7 +532,7 @@ public class DrcCommandHandler {
         });
 
         // drc_camera_focal_length_set：变焦
-        registerHandler("drc_camera_focal_length_set", data -> {
+        registerHandler("drc_" + ServiceMethod.CAMERA_FOCAL_LENGTH_SET.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             String cameraType = data.path("camera_type").asText();
             double zoomFactor = data.path("zoom_factor").asDouble();
@@ -492,7 +542,7 @@ public class DrcCommandHandler {
         });
 
         // drc_gimbal_reset：重置云台
-        registerHandler("drc_gimbal_reset", data -> {
+        registerHandler("drc_" + ServiceMethod.GIMBAL_RESET.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             int resetMode = data.path("reset_mode").asInt();
             log.info("DRC 重置云台: payload_index={}, reset_mode={} (0=回中,1=向下,2=偏航回中,3=俯仰向下)",
@@ -501,7 +551,7 @@ public class DrcCommandHandler {
         });
 
         // drc_camera_look_at：Look At（飞行器转向目标点）
-        registerHandler("drc_camera_look_at", data -> {
+        registerHandler("drc_" + ServiceMethod.CAMERA_LOOK_AT.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             boolean locked = data.path("locked").asBoolean();
             double latitude = data.path("latitude").asDouble();
@@ -513,7 +563,7 @@ public class DrcCommandHandler {
         });
 
         // drc_camera_screen_split：分屏
-        registerHandler("drc_camera_screen_split", data -> {
+        registerHandler("drc_" + ServiceMethod.CAMERA_SCREEN_SPLIT.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             boolean enable = data.path("enable").asBoolean();
             log.info("DRC 分屏: payload_index={}, enable={}", payloadIndex, enable);
@@ -521,7 +571,7 @@ public class DrcCommandHandler {
         });
 
         // drc_camera_frame_zoom：框选变焦
-        registerHandler("drc_camera_frame_zoom", data -> {
+        registerHandler("drc_" + ServiceMethod.CAMERA_FRAME_ZOOM.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             String cameraType = data.path("camera_type").asText();
             boolean locked = data.path("locked").asBoolean();
@@ -535,7 +585,7 @@ public class DrcCommandHandler {
         });
 
         // drc_ir_metering_area_set：红外测温区域设置
-        registerHandler("drc_ir_metering_area_set", data -> {
+        registerHandler("drc_" + ServiceMethod.IR_METERING_AREA_SET.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             double x = data.path("x").asDouble();
             double y = data.path("y").asDouble();
@@ -547,7 +597,7 @@ public class DrcCommandHandler {
         });
 
         // drc_ir_metering_point_set：红外测温点设置
-        registerHandler("drc_ir_metering_point_set", data -> {
+        registerHandler("drc_" + ServiceMethod.IR_METERING_POINT_SET.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             double x = data.path("x").asDouble();
             double y = data.path("y").asDouble();
@@ -556,7 +606,7 @@ public class DrcCommandHandler {
         });
 
         // drc_ir_metering_mode_set：红外测温模式设置
-        registerHandler("drc_ir_metering_mode_set", data -> {
+        registerHandler("drc_" + ServiceMethod.IR_METERING_MODE_SET.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             int mode = data.path("mode").asInt();
             log.info("DRC 红外测温模式: payload_index={}, mode={} (0=关闭,1=点测温,2=区域测温)",
@@ -565,7 +615,7 @@ public class DrcCommandHandler {
         });
 
         // drc_camera_point_focus_action：点对焦
-        registerHandler("drc_camera_point_focus_action", data -> {
+        registerHandler("drc_" + ServiceMethod.CAMERA_POINT_FOCUS_ACTION.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             String cameraType = data.path("camera_type").asText();
             double x = data.path("x").asDouble();
@@ -576,7 +626,7 @@ public class DrcCommandHandler {
         });
 
         // drc_camera_focus_value_set：相机对焦值设置
-        registerHandler("drc_camera_focus_value_set", data -> {
+        registerHandler("drc_" + ServiceMethod.CAMERA_FOCUS_VALUE_SET.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             String cameraType = data.path("camera_type").asText();
             int focusValue = data.path("focus_value").asInt();
@@ -586,7 +636,7 @@ public class DrcCommandHandler {
         });
 
         // drc_camera_focus_mode_set：相机对焦模式设置
-        registerHandler("drc_camera_focus_mode_set", data -> {
+        registerHandler("drc_" + ServiceMethod.CAMERA_FOCUS_MODE_SET.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             String cameraType = data.path("camera_type").asText();
             int focusMode = data.path("focus_mode").asInt();
@@ -596,7 +646,7 @@ public class DrcCommandHandler {
         });
 
         // drc_camera_exposure_set：相机曝光值调节
-        registerHandler("drc_camera_exposure_set", data -> {
+        registerHandler("drc_" + ServiceMethod.CAMERA_EXPOSURE_SET.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             String cameraType = data.path("camera_type").asText();
             String exposureValue = data.path("exposure_value").asText();
@@ -606,7 +656,7 @@ public class DrcCommandHandler {
         });
 
         // drc_camera_exposure_mode_set：相机曝光模式设置
-        registerHandler("drc_camera_exposure_mode_set", data -> {
+        registerHandler("drc_" + ServiceMethod.CAMERA_EXPOSURE_MODE_SET.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             String cameraType = data.path("camera_type").asText();
             int exposureMode = data.path("exposure_mode").asInt();
@@ -616,7 +666,7 @@ public class DrcCommandHandler {
         });
 
         // drc_camera_photo_stop：停止拍照（保存到 state，影响 drc_camera_state_push）
-        registerHandler("drc_camera_photo_stop", data -> {
+        registerHandler("drc_" + ServiceMethod.CAMERA_PHOTO_STOP.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             state.setPhotoState(0);
             log.info("DRC 停止拍照: payload_index={}", payloadIndex);
@@ -624,7 +674,7 @@ public class DrcCommandHandler {
         });
 
         // drc_camera_photo_take：开始拍照（保存到 state，影响 drc_camera_state_push）
-        registerHandler("drc_camera_photo_take", data -> {
+        registerHandler("drc_" + ServiceMethod.CAMERA_PHOTO_TAKE.methodName(), data -> {
             String payloadIndex = data.path("payload_index").asText();
             state.setPhotoState(1);
             log.info("DRC 开始拍照: payload_index={}", payloadIndex);

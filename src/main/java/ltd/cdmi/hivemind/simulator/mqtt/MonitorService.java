@@ -22,7 +22,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import ltd.cdmi.hivemind.simulator.config.MqttProperties;
 import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
-import ltd.cdmi.hivemind.simulator.device.DeviceType;
+import ltd.cdmi.dji.cloudapi.sdk.model.DockModel;
+import ltd.cdmi.dji.cloudapi.sdk.model.DroneModel;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.ServiceMethod;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.topic.TopicChannel;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticCode;
 import org.springframework.stereotype.Service;
 
@@ -57,6 +60,15 @@ public class MonitorService {
 
     /** DRC 缓存：key = deviceSn，value = 最新 DRC 数据 */
     private final Map<String, Map<String, Object>> drcCache = new ConcurrentHashMap<>();
+
+    /** HMS 告警缓存：key = deviceSn，value = 当前活跃告警列表（HMS 为全量告警，每次覆盖） */
+    private final Map<String, List<Map<String, Object>>> hmsCache = new ConcurrentHashMap<>();
+
+    /** 航线任务进度缓存：key = deviceSn，value = 最新任务进度数据 */
+    private final Map<String, Map<String, Object>> taskProgressCache = new ConcurrentHashMap<>();
+
+    /** 直播流缓存：外层 key = deviceSn，内层 key = videoId，value = 推流信息 */
+    private final Map<String, Map<String, Map<String, Object>>> liveStreamsCache = new ConcurrentHashMap<>();
 
     /** 当前选中的设备 SN */
     private volatile String selectedDeviceSn;
@@ -108,6 +120,9 @@ public class MonitorService {
         devices.clear();
         osdCache.clear();
         drcCache.clear();
+        hmsCache.clear();
+        taskProgressCache.clear();
+        liveStreamsCache.clear();
         selectedDeviceSn = null;
     }
 
@@ -131,10 +146,18 @@ public class MonitorService {
             String sn = extractSn(topic);
             if (sn == null) return;
 
-            if (topic.endsWith("/status")) {
+            // topic 后缀路由：使用 SDK TopicChannel.suffix() 常量保证与协议定义一致
+            String statusSuffix = "/" + TopicChannel.STATUS.suffix();
+            String osdSuffix = "/" + TopicChannel.OSD.suffix();
+            String stateSuffix = "/" + TopicChannel.STATE.suffix();
+            String drcUpSuffix = "/" + TopicChannel.DRC_UP.suffix();
+            String eventsSuffix = "/" + TopicChannel.EVENTS.suffix();
+            String servicesSuffix = "/" + TopicChannel.SERVICES.suffix();
+
+            if (topic.endsWith(statusSuffix)) {
                 // update_topo：设备上下线
                 handleUpdateTopo(sn, node);
-            } else if (topic.endsWith("/osd")) {
+            } else if (topic.endsWith(osdSuffix)) {
                 // OSD 遥测数据
                 osdCache.put(sn, objectMapper.treeToValue(node, Map.class));
                 // 自动发现设备：监控器连接时设备已在线、错过 update_topo 的场景
@@ -142,7 +165,7 @@ public class MonitorService {
                 if (osdData.has("drone_in_dock")) {
                     autoDiscoverFromDockOsd(sn, node);
                 }
-            } else if (topic.endsWith("/state")) {
+            } else if (topic.endsWith(stateSuffix)) {
                 // 状态变更（state 属性合并到 OSD 的 data 字段内部，与 OSD 结构保持一致）
                 // DJI Cloud API：osd/state 消息体均为 {tid,bid,data:{...},timestamp,version}，
                 // 实际属性在 data 字段内。前端统一从 data 字段读取，故 state 属性须合并到 data 内。
@@ -162,9 +185,15 @@ public class MonitorService {
                         return base;
                     });
                 }
-            } else if (topic.endsWith("/drc/up")) {
+            } else if (topic.endsWith(drcUpSuffix)) {
                 // DRC 上行通道（DRC 模式下的实时状态推送）
                 drcCache.put(sn, objectMapper.treeToValue(node, Map.class));
+            } else if (topic.endsWith(eventsSuffix)) {
+                // 事件上报（HMS 告警等）
+                handleEvents(sn, node);
+            } else if (topic.endsWith(servicesSuffix)) {
+                // 平台下发的 services 指令（直播相关指令解析）
+                handleServices(sn, node);
             }
         } catch (Exception e) {
             log.debug("监控器消息解析异常 topic={}: {}", topic, e.getMessage());
@@ -262,6 +291,92 @@ public class MonitorService {
         }
     }
 
+    /**
+     * 处理 events 事件上报。
+     * <p>目前支持 method=hms（HMS 健康告警）。HMS 为全量告警——每次上报覆盖该设备的告警列表，
+     * 空列表表示所有告警已解除。协议参考 DJI Cloud API 健康告警。</p>
+     */
+    private void handleEvents(String sn, JsonNode node) {
+        String method = node.path("method").asText("");
+        if ("hms".equals(method)) {
+            JsonNode listNode = node.path("data").path("list");
+            List<Map<String, Object>> alerts = new ArrayList<>();
+            if (listNode.isArray()) {
+                for (JsonNode item : listNode) {
+                    try {
+                        alerts.add(objectMapper.treeToValue(item, Map.class));
+                    } catch (Exception e) {
+                        log.warn("HMS 告警项解析失败: {}", e.getMessage());
+                    }
+                }
+            }
+            if (alerts.isEmpty()) {
+                hmsCache.remove(sn);
+            } else {
+                hmsCache.put(sn, alerts);
+            }
+            log.info("监控器收到 HMS 告警: sn={}, count={}", sn, alerts.size());
+        } else if ("flighttask_progress".equals(method)) {
+            // 航线任务进度上报：提取关键字段缓存
+            JsonNode output = node.path("data").path("output");
+            Map<String, Object> progress = new LinkedHashMap<>();
+            progress.put("flight_id", output.path("ext").path("flight_id").asText(""));
+            progress.put("track_id", output.path("ext").path("track_id").asText(""));
+            progress.put("status", output.path("status").asText(""));
+            progress.put("percent", output.path("progress").path("percent").asInt(0));
+            progress.put("current_step", output.path("progress").path("current_step").asInt(0));
+            progress.put("timestamp", node.path("timestamp").asLong());
+            taskProgressCache.put(sn, progress);
+            log.info("监控器收到任务进度: sn={}, flightId={}, status={}, percent={}",
+                    sn, progress.get("flight_id"), progress.get("status"), progress.get("percent"));
+        }
+    }
+
+    /**
+     * 处理 services 指令（平台→设备下行）。
+     * <p>目前解析直播相关指令（live_start_push/live_stop_push/live_lens_change），
+     * 维护直播流缓存供监控器展示当前活跃推流。</p>
+     */
+    private void handleServices(String sn, JsonNode node) {
+        String method = node.path("method").asText("");
+        JsonNode data = node.path("data");
+
+        if (ServiceMethod.LIVE_START_PUSH.methodName().equals(method)) {
+            String videoId = data.path("video_id").asText("");
+            if (videoId.isEmpty()) return;
+            Map<String, Object> stream = new LinkedHashMap<>();
+            stream.put("video_id", videoId);
+            stream.put("url", data.path("url").asText(""));
+            stream.put("url_type", data.path("url_type").asInt(0));
+            stream.put("video_quality", data.path("video_quality").asInt(0));
+            stream.put("video_type", "normal");
+            liveStreamsCache.computeIfAbsent(sn, k -> new ConcurrentHashMap<>()).put(videoId, stream);
+            log.info("监控器收到直播推流启动: sn={}, videoId={}", sn, videoId);
+        } else if (ServiceMethod.LIVE_STOP_PUSH.methodName().equals(method)) {
+            String videoId = data.path("video_id").asText("");
+            Map<String, Map<String, Object>> streams = liveStreamsCache.get(sn);
+            if (streams != null && !videoId.isEmpty()) {
+                streams.remove(videoId);
+                if (streams.isEmpty()) liveStreamsCache.remove(sn);
+            }
+            log.info("监控器收到直播推流停止: sn={}, videoId={}", sn, videoId);
+        } else if (ServiceMethod.LIVE_LENS_CHANGE.methodName().equals(method)) {
+            String videoId = data.path("video_id").asText("");
+            String videoType = data.path("video_type").asText("");
+            Map<String, Map<String, Object>> streams = liveStreamsCache.get(sn);
+            if (streams == null || videoType.isEmpty()) return;
+            if (!videoId.isEmpty()) {
+                // 按 video_id 精准切换
+                Map<String, Object> stream = streams.get(videoId);
+                if (stream != null) stream.put("video_type", videoType);
+            } else {
+                // 全局镜头切换（无 video_id，对所有推流生效）
+                streams.values().forEach(s -> s.put("video_type", videoType));
+            }
+            log.info("监控器收到镜头切换: sn={}, videoId={}, videoType={}", sn, videoId, videoType);
+        }
+    }
+
     // ==================== 设备管理 ====================
 
     /** 获取设备列表 */
@@ -282,6 +397,24 @@ public class MonitorService {
     /** 获取 DRC 数据 */
     public Map<String, Object> getDrcData(String sn) {
         return drcCache.getOrDefault(sn, Collections.emptyMap());
+    }
+
+    /** 获取所有设备的 HMS 告警（key = deviceSn，value = 活跃告警列表） */
+    public Map<String, List<Map<String, Object>>> getHmsAlerts() {
+        return new ConcurrentHashMap<>(hmsCache);
+    }
+
+    /** 获取所有设备的航线任务进度（key = deviceSn，value = 最新进度数据） */
+    public Map<String, Map<String, Object>> getTaskProgress() {
+        return new ConcurrentHashMap<>(taskProgressCache);
+    }
+
+    /** 获取所有设备的直播流（key = deviceSn，value = 活跃推流列表） */
+    public Map<String, List<Map<String, Object>>> getLiveStreams() {
+        Map<String, List<Map<String, Object>>> result = new LinkedHashMap<>();
+        liveStreamsCache.forEach((sn, streams) ->
+                result.put(sn, new ArrayList<>(streams.values())));
+        return result;
     }
 
     /**
@@ -393,13 +526,19 @@ public class MonitorService {
         public long lastUpdate;
 
         public String getDeviceName() {
-            DeviceType dock = DeviceType.fromDockType(gatewayType);
-            return dock != null ? dock.getDisplayName() : "Dock-" + gatewayType;
+            try {
+                return DockModel.fromType(gatewayType, 0).displayName();
+            } catch (IllegalArgumentException e) {
+                return "Dock-" + gatewayType;
+            }
         }
 
         public String getDroneName() {
-            DeviceType drone = DeviceType.fromAircraftType(droneType, droneSubType);
-            return drone != null ? drone.getDisplayName() : "Drone-" + droneType;
+            try {
+                return DroneModel.fromType(droneType, droneSubType).displayName();
+            } catch (IllegalArgumentException e) {
+                return "Drone-" + droneType;
+            }
         }
     }
 }

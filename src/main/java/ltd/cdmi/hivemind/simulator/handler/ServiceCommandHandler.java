@@ -18,6 +18,7 @@ package ltd.cdmi.hivemind.simulator.handler;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import jakarta.annotation.PostConstruct;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.ServiceMethod;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
 import ltd.cdmi.hivemind.simulator.device.DeviceState;
@@ -48,29 +49,32 @@ public class ServiceCommandHandler {
 
     /** 航线任务相关命令（委托 WaylineTaskSimulator，步骤6注入） */
     private static final Set<String> WAYLINE_METHODS = Set.of(
-            "flighttask_prepare", "flighttask_execute", "flighttask_pause",
-            "flighttask_recovery", "flighttask_undo", "flighttask_stop",
-            "return_home", "return_home_cancel", "return_specific_home",
-            "flight_setup_abort"
+            ServiceMethod.FLIGHTTASK_PREPARE.methodName(), ServiceMethod.FLIGHTTASK_EXECUTE.methodName(),
+            ServiceMethod.FLIGHTTASK_PAUSE.methodName(), ServiceMethod.FLIGHTTASK_RECOVERY.methodName(),
+            ServiceMethod.FLIGHTTASK_UNDO.methodName(), ServiceMethod.FLIGHTTASK_STOP.methodName(),
+            ServiceMethod.RETURN_HOME.methodName(), ServiceMethod.RETURN_HOME_CANCEL.methodName(),
+            ServiceMethod.RETURN_SPECIFIC_HOME.methodName(), ServiceMethod.FLIGHT_SETUP_ABORT.methodName()
     );
 
     /** 直播相关命令（委托 LiveStreamSimulator，步骤7注入） */
     private static final Set<String> LIVE_METHODS = Set.of(
-            "live_start_push", "live_stop_push", "live_set_quality",
-            "live_camera_change", "live_lens_change"
+            ServiceMethod.LIVE_START_PUSH.methodName(), ServiceMethod.LIVE_STOP_PUSH.methodName(),
+            ServiceMethod.LIVE_SET_QUALITY.methodName(), ServiceMethod.LIVE_CAMERA_CHANGE.methodName(),
+            ServiceMethod.LIVE_LENS_CHANGE.methodName()
     );
 
     /** 媒体管理相关命令（委托 MediaUploadSimulator） */
     private static final Set<String> MEDIA_METHODS = Set.of(
-            "upload_flighttask_media_prioritize"
+            ServiceMethod.UPLOAD_FLIGHTTASK_MEDIA_PRIORITIZE.methodName()
     );
 
     /** 指令飞行命令（drc.html，委托 FlightCommandSimulator） */
     private static final Set<String> FLY_METHODS = Set.of(
-            "fly_to_point", "fly_to_point_stop", "fly_to_point_update",
-            "takeoff_to_point",
-            "flight_authority_grab", "payload_authority_grab",
-            "poi_mode_enter", "poi_mode_exit", "poi_circle_speed_set"
+            ServiceMethod.FLY_TO_POINT.methodName(), ServiceMethod.FLY_TO_POINT_STOP.methodName(),
+            ServiceMethod.FLY_TO_POINT_UPDATE.methodName(), ServiceMethod.TAKEOFF_TO_POINT.methodName(),
+            ServiceMethod.FLIGHT_AUTHORITY_GRAB.methodName(), ServiceMethod.PAYLOAD_AUTHORITY_GRAB.methodName(),
+            ServiceMethod.POI_MODE_ENTER.methodName(), ServiceMethod.POI_MODE_EXIT.methodName(),
+            ServiceMethod.POI_CIRCLE_SPEED_SET.methodName()
     );
 
     /**
@@ -257,16 +261,17 @@ public class ServiceCommandHandler {
         }
 
         // 自定义飞行区更新指令（wayline.html，Dock1/Dock2/Dock3）：回 result=0 并自动联动 flight_areas_get
+        // flight_areas_update 在 SDK ServiceMethod 中未定义，保留字符串字面量
         if ("flight_areas_update".equals(method)) {
             return flightAreaSimulator.handleServiceUpdate();
         }
 
         // 远程解禁指令（wayline.html，Dock1/Dock2/Dock3）：同步 Service，回 result=0
         if (UnlockLicenseSimulator.isUnlockLicenseMethod(method)) {
-            if ("unlock_license_switch".equals(method)) {
+            if (ServiceMethod.UNLOCK_LICENSE_SWITCH.methodName().equals(method)) {
                 return unlockLicenseSimulator.handleSwitch(data);
             }
-            if ("unlock_license_list".equals(method)) {
+            if (ServiceMethod.UNLOCK_LICENSE_LIST.methodName().equals(method)) {
                 return unlockLicenseSimulator.handleList(data);
             }
             return unlockLicenseSimulator.handleUpdate(data);

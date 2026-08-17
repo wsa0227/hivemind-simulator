@@ -18,6 +18,7 @@ package ltd.cdmi.hivemind.simulator.http.api;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.http.HivemindHttpClient;
 import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 
@@ -43,6 +44,7 @@ class DeviceTopoApiTest {
 
     // ==================== TC-TSA-009：路径前缀与 MapElementApi 不同 ====================
 
+    @DisplayName("TC-TSA-009：DeviceTopoApi 路径前缀与 MapElementApi 不同")
     @Test
     void getDeviceTopoUsesCorrectPathPrefix() {
         when(runtimeConfig.getOrganizationId()).thenReturn("ws-123");
@@ -65,6 +67,7 @@ class DeviceTopoApiTest {
 
     // ==================== workspace_id 缺失时使用默认值 ====================
 
+    @DisplayName("补充测试：workspace_id 缺失时使用默认值")
     @Test
     void getDeviceTopoUsesDefaultWorkspaceIdWhenMissing() {
         when(runtimeConfig.getOrganizationId()).thenReturn("");
@@ -79,6 +82,7 @@ class DeviceTopoApiTest {
                 pathCaptor.getValue());
     }
 
+    @DisplayName("补充测试：workspace_id 为 null 时使用默认值")
     @Test
     void getDeviceTopoUsesDefaultWorkspaceIdWhenNull() {
         when(runtimeConfig.getOrganizationId()).thenReturn(null);

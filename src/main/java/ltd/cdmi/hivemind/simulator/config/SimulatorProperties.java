@@ -31,7 +31,8 @@ public record SimulatorProperties(
         Media media,
         Hivemind hivemind,
         Mop mop,
-        Map map
+        Map map,
+        Thing thing
 ) {
 
     /** 机场默认位置（默认成都，与 hivemind 默认地图中心一致） */
@@ -118,5 +119,15 @@ public record SimulatorProperties(
     public record Map(
             String userName,
             String elementPreName
+    ) {}
+
+    /**
+     * 物模型版本配置（update_topo 中 thing_version 字段）。
+     * <p>DJI 设备的物模型版本号（thing_version）标识设备的属性/服务/事件定义版本，
+     * 不同于固件版本。不同设备型号、不同固件版本对应不同的物模型版本。
+     * <p>默认值 "1.2.3" 为 DJI Dock3 最新物模型版本（参考 DJI 社区 Dock3ThingVersionEnum）。
+     */
+    public record Thing(
+            String thingVersion
     ) {}
 }

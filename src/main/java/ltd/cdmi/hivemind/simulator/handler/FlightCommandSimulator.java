@@ -17,11 +17,23 @@ package ltd.cdmi.hivemind.simulator.handler;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.annotation.PreDestroy;
+import ltd.cdmi.dji.cloudapi.sdk.codec.MessageCodec;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.SimulateMission;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.flight.FlyToPointRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.flight.FlyToPointTarget;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.flight.FlyToPointUpdateRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.flight.PayloadAuthorityGrabRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.flight.TakeoffToPointRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.pilot.PoiCircleSpeedSetRequest;
+import ltd.cdmi.dji.cloudapi.sdk.command.service.pilot.PoiModeEnterRequest;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.envelope.EventEnvelope;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.EventMethod;
+import ltd.cdmi.dji.cloudapi.sdk.protocol.method.ServiceMethod;
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
 import ltd.cdmi.hivemind.simulator.device.DeviceMode;
 import ltd.cdmi.hivemind.simulator.device.DeviceState;
-import ltd.cdmi.hivemind.simulator.device.DeviceType;
+import ltd.cdmi.dji.cloudapi.sdk.model.DockModel;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticCode;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticLogRecorder;
 import ltd.cdmi.hivemind.simulator.mqtt.DockTopicSchema;
@@ -67,7 +79,12 @@ public class FlightCommandSimulator {
     private static final int DRONE_MODE_STANDBY = 0;
     /** 无人机 mode_code：自动返航 */
     private static final int DRONE_MODE_AUTO_RTH = 9;
-    /** 无人机 mode_code：降落中 */
+    /**
+     * 无人机 mode_code：降落中。
+     * <p>待确认：DJI 文档中 10=自动降落、11=强制降落、12=三桨叶降落。
+     * 遥控器失联"着陆"应对应 10=自动降落还是 12=三桨叶降落，文档未明确，待真机验证。
+     * 当前使用 12，已有 M-2 诊断日志记录（trigger_rc_lost）。
+     */
     private static final int DRONE_MODE_LANDING = 12;
 
     private final SimulatorProperties props;
@@ -114,16 +131,19 @@ public class FlightCommandSimulator {
      * @return services_reply 的 output（result=0）
      */
     public Map<String, Object> handleFlyToPoint(JsonNode data, String bid) {
-        String flyToId = data.path("fly_to_id").asText();
-        int maxSpeed = data.path("max_speed").asInt(10);
-        JsonNode points = data.path("points");
-        double targetLat = 0, targetLng = 0, targetHeight = 0;
-        if (points.isArray() && !points.isEmpty()) {
-            JsonNode point = points.get(0);
-            targetLat = point.path("latitude").asDouble();
-            targetLng = point.path("longitude").asDouble();
-            targetHeight = point.path("height").asDouble();
+        var req = MessageCodec.fromJson(data.toString(), FlyToPointRequest.class);
+        String flyToId = req.flyToId();
+        Integer maxSpeedRaw = req.maxSpeed();
+        int maxSpeed = maxSpeedRaw != null ? maxSpeedRaw : 10;
+        List<FlyToPointTarget> points = req.points();
+        if (points == null || points.isEmpty()) {
+            log.warn("fly_to_point 指令 points 为空，拒绝执行: fly_to_id={}", flyToId);
+            return Map.of("result", 1);
         }
+        FlyToPointTarget point = points.get(0);
+        double targetLat = point.latitude();
+        double targetLng = point.longitude();
+        double targetHeight = point.height();
 
         state.setCurrentFlyToId(flyToId);
         state.setMaxSpeed(maxSpeed);
@@ -165,7 +185,7 @@ public class FlightCommandSimulator {
         data.put("remaining_distance", 0);
         data.put("remaining_time", 0);
         data.put("planned_path_points", List.of());
-        publishEvent("fly_to_point_progress", bid, data);
+        publishEvent(EventMethod.FLY_TO_POINT_PROGRESS, bid, data);
 
         return Map.of("result", 0);
     }
@@ -176,15 +196,18 @@ public class FlightCommandSimulator {
      * 解析 max_speed/points[0]，更新 DeviceState 中的目标点信息。</p>
      */
     public Map<String, Object> handleFlyToPointUpdate(JsonNode data) {
-        int maxSpeed = data.path("max_speed").asInt(10);
-        JsonNode points = data.path("points");
-        double targetLat = 0, targetLng = 0, targetHeight = 0;
-        if (points.isArray() && !points.isEmpty()) {
-            JsonNode point = points.get(0);
-            targetLat = point.path("latitude").asDouble();
-            targetLng = point.path("longitude").asDouble();
-            targetHeight = point.path("height").asDouble();
+        var req = MessageCodec.fromJson(data.toString(), FlyToPointUpdateRequest.class);
+        Integer maxSpeedRaw = req.maxSpeed();
+        int maxSpeed = maxSpeedRaw != null ? maxSpeedRaw : 10;
+        List<FlyToPointTarget> points = req.points();
+        if (points == null || points.isEmpty()) {
+            log.warn("fly_to_point_update 指令 points 为空，拒绝执行");
+            return Map.of("result", 1);
         }
+        FlyToPointTarget point = points.get(0);
+        double targetLat = point.latitude();
+        double targetLng = point.longitude();
+        double targetHeight = point.height();
         state.setMaxSpeed(maxSpeed);
         state.setTargetLatitude(targetLat);
         state.setTargetLongitude(targetLng);
@@ -205,35 +228,37 @@ public class FlightCommandSimulator {
         // rth_mode=0（智能高度）拒绝：仅大疆机场不支持智能高度模式（TC-FLY-031）
         // Pilot 模式下 rth_mode=0 是合法选项（Pilot 文档标注【必填】，未说不支持）
         // 仅显式下发 rth_mode=0 才拒绝；Dock1 不下发此字段（isMissingNode）不触发
+        // 注意：此检查必须在 POJO 反序列化之前，避免其他必填字段缺失导致反序列化失败而无法执行拒绝逻辑
         if (runtimeConfig.getDeviceMode() != DeviceMode.PILOT) {
             JsonNode rthModeNode = data.path("rth_mode");
             if (!rthModeNode.isMissingNode() && rthModeNode.asInt() == 0) {
                 // DJI 文档称"大疆机场当前不支持设置返航高度模式"，但未明确真机收到 rth_mode=0 的具体反应
                 // （错误码/行为），模拟器按拒绝执行返回 result=1，待真机验证
-                diagnosticRecorder.record(DiagnosticCode.MONITOR_SIMULATOR_INFERENCE, "takeoff_to_point",
+                diagnosticRecorder.record(DiagnosticCode.MONITOR_SIMULATOR_INFERENCE, ServiceMethod.TAKEOFF_TO_POINT.methodName(),
                         "rth_mode=0（智能高度）：DJI文档称机场不支持此模式，但未明确真机具体反应（错误码/行为），模拟器按拒绝执行返回result=1，待真机验证");
                 log.warn("[M-2] takeoff_to_point rth_mode=0: 模拟器未确认真机反应，按拒绝处理");
                 return Map.of("result", 1);
             }
         }
 
-        String flightId = data.path("flight_id").asText();
-        int maxSpeed = data.path("max_speed").asInt(10);
-        double targetLat = data.path("target_latitude").asDouble();
-        double targetLng = data.path("target_longitude").asDouble();
-        double targetHeight = data.path("target_height").asDouble();
-        double securityTakeoffHeight = data.path("security_takeoff_height").asDouble();
-        int rthAltitude = data.path("rth_altitude").asInt();
-        int rthMode = data.path("rth_mode").asInt();
-        int rcLostAction = data.path("rc_lost_action").asInt();
-        int commanderModeLostAction = data.path("commander_mode_lost_action").asInt();
-        int commanderFlightMode = data.path("commander_flight_mode").asInt();
-        double commanderFlightHeight = data.path("commander_flight_height").asDouble();
-        int flightSafetyAdvanceCheck = data.path("flight_safety_advance_check").asInt();
-        JsonNode simMission = data.path("simulate_mission");
-        int simEnable = simMission.path("is_enable").asInt();
-        double simLat = simMission.path("latitude").asDouble();
-        double simLng = simMission.path("longitude").asDouble();
+        var req = MessageCodec.fromJson(data.toString(), TakeoffToPointRequest.class);
+        String flightId = req.flightId();
+        int maxSpeed = req.maxSpeed() != null ? req.maxSpeed() : 10;
+        double targetLat = req.targetLatitude();
+        double targetLng = req.targetLongitude();
+        double targetHeight = req.targetHeight();
+        double securityTakeoffHeight = req.securityTakeoffHeight() != null ? req.securityTakeoffHeight() : 0;
+        int rthAltitude = req.rthAltitude() != null ? req.rthAltitude() : 0;
+        int rthMode = req.rthMode() != null ? req.rthMode() : 0;
+        int rcLostAction = req.rcLostAction() != null ? req.rcLostAction() : 0;
+        int commanderModeLostAction = req.commanderModeLostAction() != null ? req.commanderModeLostAction() : 0;
+        int commanderFlightMode = req.commanderFlightMode() != null ? req.commanderFlightMode() : 0;
+        double commanderFlightHeight = req.commanderFlightHeight() != null ? req.commanderFlightHeight() : 0;
+        int flightSafetyAdvanceCheck = req.flightSafetyAdvanceCheck() != null ? req.flightSafetyAdvanceCheck() : 0;
+        SimulateMission simMission = req.simulateMission();
+        int simEnable = simMission != null && simMission.isEnable() != null ? simMission.isEnable() : 0;
+        double simLat = simMission != null && simMission.latitude() != null ? simMission.latitude() : 0;
+        double simLng = simMission != null && simMission.longitude() != null ? simMission.longitude() : 0;
 
         String trackId = UUID.randomUUID().toString();
 
@@ -273,7 +298,8 @@ public class FlightCommandSimulator {
      * 处理 payload_authority_grab 指令（同步，无进度事件）。
      */
     public Map<String, Object> handlePayloadAuthorityGrab(JsonNode data) {
-        String payloadIndex = data.path("payload_index").asText();
+        var req = MessageCodec.fromJson(data.toString(), PayloadAuthorityGrabRequest.class);
+        String payloadIndex = req.payloadIndex();
         log.info("payload_authority_grab 指令: payload_index={}", payloadIndex);
         return Map.of("result", 0);
     }
@@ -288,9 +314,10 @@ public class FlightCommandSimulator {
             log.warn("[P-10] poi_mode_enter 仅 Dock1/Pilot 支持，当前模式: {}", runtimeConfig.getDeviceMode());
             return Map.of("result", 1);
         }
-        double latitude = data.path("latitude").asDouble();
-        double longitude = data.path("longitude").asDouble();
-        double height = data.path("height").asDouble();
+        var req = MessageCodec.fromJson(data.toString(), PoiModeEnterRequest.class);
+        double latitude = req.latitude();
+        double longitude = req.longitude();
+        double height = req.height();
         log.info("poi_mode_enter 指令: target=({},{},{})", latitude, longitude, height);
         triggerPoiStatusNotify("in_progress", 0, 0, 0, 0);
         return Map.of("result", 0);
@@ -320,7 +347,8 @@ public class FlightCommandSimulator {
             log.warn("[P-10] poi_circle_speed_set 仅 Dock1/Pilot 支持，当前模式: {}", runtimeConfig.getDeviceMode());
             return Map.of("result", 1);
         }
-        double circleSpeed = data.path("circle_speed").asDouble();
+        var req = MessageCodec.fromJson(data.toString(), PoiCircleSpeedSetRequest.class);
+        double circleSpeed = req.circleSpeed();
         log.info("poi_circle_speed_set 指令: circle_speed={}", circleSpeed);
         return Map.of("result", 0);
     }
@@ -334,7 +362,7 @@ public class FlightCommandSimulator {
      */
     private boolean isPoiSupported() {
         return runtimeConfig.getDeviceMode() == DeviceMode.PILOT
-                || runtimeConfig.getDockType() == DeviceType.DOCK1;
+                || runtimeConfig.getDockType() == DockModel.DOCK1;
     }
 
     /**
@@ -345,21 +373,17 @@ public class FlightCommandSimulator {
      * @return services_reply 的 output（含 result 字段）
      */
     public Map<String, Object> handle(String method, JsonNode data, String bid) {
-        return switch (method) {
-            case "fly_to_point" -> handleFlyToPoint(data, bid);
-            case "fly_to_point_stop" -> handleFlyToPointStop(bid);
-            case "fly_to_point_update" -> handleFlyToPointUpdate(data);
-            case "takeoff_to_point" -> handleTakeoffToPoint(data, bid);
-            case "flight_authority_grab" -> handleFlightAuthorityGrab();
-            case "payload_authority_grab" -> handlePayloadAuthorityGrab(data);
-            case "poi_mode_enter" -> handlePoiModeEnter(data);
-            case "poi_mode_exit" -> handlePoiModeExit();
-            case "poi_circle_speed_set" -> handlePoiCircleSpeedSet(data);
-            default -> {
-                log.warn("未知的指令飞行方法: {}，返回占位 result=0", method);
-                yield Map.of("result", 0);
-            }
-        };
+        if (ServiceMethod.FLY_TO_POINT.methodName().equals(method)) return handleFlyToPoint(data, bid);
+        if (ServiceMethod.FLY_TO_POINT_STOP.methodName().equals(method)) return handleFlyToPointStop(bid);
+        if (ServiceMethod.FLY_TO_POINT_UPDATE.methodName().equals(method)) return handleFlyToPointUpdate(data);
+        if (ServiceMethod.TAKEOFF_TO_POINT.methodName().equals(method)) return handleTakeoffToPoint(data, bid);
+        if (ServiceMethod.FLIGHT_AUTHORITY_GRAB.methodName().equals(method)) return handleFlightAuthorityGrab();
+        if (ServiceMethod.PAYLOAD_AUTHORITY_GRAB.methodName().equals(method)) return handlePayloadAuthorityGrab(data);
+        if (ServiceMethod.POI_MODE_ENTER.methodName().equals(method)) return handlePoiModeEnter(data);
+        if (ServiceMethod.POI_MODE_EXIT.methodName().equals(method)) return handlePoiModeExit();
+        if (ServiceMethod.POI_CIRCLE_SPEED_SET.methodName().equals(method)) return handlePoiCircleSpeedSet(data);
+        log.warn("未知的指令飞行方法: {}，返回占位 result=0", method);
+        return Map.of("result", 0);
     }
 
     // ==================== 进度事件调度 ====================
@@ -397,7 +421,7 @@ public class FlightCommandSimulator {
             data.put("remaining_distance", distance);
             data.put("remaining_time", remainingTime);
             data.put("planned_path_points", pathPoints);
-            publishEvent("fly_to_point_progress", bid, data);
+            publishEvent(EventMethod.FLY_TO_POINT_PROGRESS, bid, data);
         }, PROGRESS_INTERVAL_SECONDS, TimeUnit.SECONDS);
 
         // wayline_ok（完成）
@@ -410,7 +434,7 @@ public class FlightCommandSimulator {
             data.put("remaining_distance", 0);
             data.put("remaining_time", 0);
             data.put("planned_path_points", pathPoints);
-            publishEvent("fly_to_point_progress", bid, data);
+            publishEvent(EventMethod.FLY_TO_POINT_PROGRESS, bid, data);
             // simulate_mission.is_enable=1 时不更新实际位置（室内调试模式）
             if (state.getSimulateMissionEnable() != 1) {
                 state.setDroneLatitude(targetLat);
@@ -471,7 +495,7 @@ public class FlightCommandSimulator {
         data.put("remaining_distance", remainingDistance);
         data.put("remaining_time", remainingTime);
         data.put("planned_path_points", pathPoints);
-        publishEvent("takeoff_to_point_progress", bid, data);
+        publishEvent(EventMethod.TAKEOFF_TO_POINT_PROGRESS, bid, data);
     }
 
     // ==================== 设备主动上报事件（REST API 触发，无前端 UI） ====================
@@ -482,7 +506,7 @@ public class FlightCommandSimulator {
      */
     public String triggerObstacleAvoidanceNotify(String waylineUuid, String flightId,
                                                   List<Map<String, Object>> obstacles, boolean isFinalReport) {
-        if (runtimeConfig.getDockType() != DeviceType.DOCK3) {
+        if (runtimeConfig.getDockType() != DockModel.DOCK3) {
             return "避障记录上报仅 Dock3 支持";
         }
         if (!mqtt.isConnected()) {
@@ -493,7 +517,7 @@ public class FlightCommandSimulator {
         data.put("flight_id", flightId);
         data.put("obstacles", obstacles);
         data.put("is_final_report", isFinalReport);
-        publishEvent("obstacle_avoidance_notify", UUID.randomUUID().toString(), data);
+        publishEvent(EventMethod.OBSTACLE_AVOIDANCE_NOTIFY, UUID.randomUUID().toString(), data);
         log.info("已触发 obstacle_avoidance_notify: flight_id={}, obstacles={}", flightId, obstacles.size());
         return null;
     }
@@ -508,7 +532,7 @@ public class FlightCommandSimulator {
         }
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("reason", reason);
-        publishEvent("joystick_invalid_notify", UUID.randomUUID().toString(), data);
+        publishEvent(EventMethod.JOYSTICK_INVALID_NOTIFY, UUID.randomUUID().toString(), data);
         log.info("已触发 joystick_invalid_notify: reason={}", reason);
         return null;
     }
@@ -537,7 +561,7 @@ public class FlightCommandSimulator {
         data.put("output", output);
         data.put("result", 0);
 
-        publishEvent("camera_photo_take_progress", UUID.randomUUID().toString(), data);
+        publishEvent(EventMethod.CAMERA_PHOTO_TAKE_PROGRESS, UUID.randomUUID().toString(), data);
         log.info("已触发 camera_photo_take_progress: status={}, percent={}", status, percent);
         return null;
     }
@@ -560,7 +584,7 @@ public class FlightCommandSimulator {
         data.put("circle_radius", circleRadius);
         data.put("circle_speed", circleSpeed);
         data.put("max_circle_speed", maxCircleSpeed);
-        publishEvent("poi_status_notify", UUID.randomUUID().toString(), data);
+        publishEvent(EventMethod.POI_STATUS_NOTIFY, UUID.randomUUID().toString(), data);
         log.info("已触发 poi_status_notify: status={}, reason={}", status, reason);
         return null;
     }
@@ -586,7 +610,7 @@ public class FlightCommandSimulator {
         // 上报 joystick_invalid_notify 事件（reason=0 遥控器失联）
         Map<String, Object> notifyData = new LinkedHashMap<>();
         notifyData.put("reason", 0);
-        publishEvent("joystick_invalid_notify", UUID.randomUUID().toString(), notifyData);
+        publishEvent(EventMethod.JOYSTICK_INVALID_NOTIFY, UUID.randomUUID().toString(), notifyData);
 
         // 根据 rc_lost_action 设置 mode_code 并调度后续行为
         int targetModeCode = switch (rcLostAction) {
@@ -691,24 +715,19 @@ public class FlightCommandSimulator {
      * 发布 events 事件。
      * <p>格式：{@code {bid, tid, timestamp, need_reply, gateway, method, data}}</p>
      */
-    private void publishEvent(String method, String bid, Map<String, Object> data) {
+    private void publishEvent(EventMethod method, String bid, Map<String, Object> data) {
         try {
-            Map<String, Object> envelope = new LinkedHashMap<>();
-            envelope.put("bid", bid);
-            envelope.put("tid", UUID.randomUUID().toString());
-            envelope.put("timestamp", System.currentTimeMillis());
-            // DJI 指令飞行事件信封必填：1=需要答复（fly_to_point_progress/takeoff_to_point_progress/
-            // obstacle_avoidance_notify/joystick_invalid_notify/camera_photo_take_progress 文档均为 need_reply=1）
-            envelope.put("need_reply", 1);
-            envelope.put("gateway", runtimeConfig.getGatewaySn());
-            envelope.put("method", method);
-            envelope.put("data", data);
+            EventEnvelope envelope = EventEnvelope.of(
+                    UUID.randomUUID().toString(),
+                    bid,
+                    System.currentTimeMillis(),
+                    method, data, runtimeConfig.getGatewaySn());
 
             String topic = dockTopicSchema.topic(dockTopicSchema.events(), runtimeConfig.getGatewaySn());
-            mqtt.publishJson(topic, envelope);
-            log.info("已发布 events: method={}, bid={}", method, bid);
+            mqtt.publish(topic, MessageCodec.toJson(envelope));
+            log.info("已发布 events: method={}, bid={}", method.methodName(), bid);
         } catch (Exception e) {
-            log.error("发布 events 失败: method={}, bid={}, err={}", method, bid, e.getMessage(), e);
+            log.error("发布 events 失败: method={}, bid={}, err={}", method.methodName(), bid, e.getMessage(), e);
         }
     }
 }

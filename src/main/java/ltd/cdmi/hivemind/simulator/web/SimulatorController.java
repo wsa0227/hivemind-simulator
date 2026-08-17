@@ -19,14 +19,17 @@ import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
 import ltd.cdmi.hivemind.simulator.device.DeviceMode;
 import ltd.cdmi.hivemind.simulator.device.DeviceState;
-import ltd.cdmi.hivemind.simulator.device.DeviceType;
+import ltd.cdmi.dji.cloudapi.sdk.model.DockModel;
+import ltd.cdmi.dji.cloudapi.sdk.model.DroneModel;
+import ltd.cdmi.dji.cloudapi.sdk.model.RcModel;
 import ltd.cdmi.hivemind.simulator.device.DockOnlineService;
+import ltd.cdmi.dji.cloudapi.sdk.model.PayloadType;
 import ltd.cdmi.hivemind.simulator.device.PilotOnlineService;
 import ltd.cdmi.hivemind.simulator.diagnostic.CoverageRecorder;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticCode;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticLogRecorder;
-import ltd.cdmi.hivemind.simulator.handler.FfmpegWhipPusher;
-import ltd.cdmi.hivemind.simulator.handler.FfmpegInstaller;
+import ltd.cdmi.hivemind.simulator.media.FfmpegWhipPusher;
+import ltd.cdmi.hivemind.simulator.media.FfmpegInstaller;
 import ltd.cdmi.hivemind.simulator.handler.FlightCommandSimulator;
 import ltd.cdmi.hivemind.simulator.handler.AirSenseSimulator;
 import ltd.cdmi.hivemind.simulator.handler.FlightAreaSimulator;
@@ -172,12 +175,13 @@ public class SimulatorController {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("success", onlineResult.success());
         result.put("code", onlineResult.code());
+        result.put("step", onlineResult.step());
         result.put("online", state.isOnline());
         result.put("mqtt_connected", mqtt.isConnected());
         return result;
     }
 
-    /** 设备下线：停止 OSD + update_topo 空列表 + 断开 MQTT */
+    /** 设备关机：停止 OSD + update_topo 空列表 + 断开 MQTT + 清空诊断日志与 MQTT 消息日志（会话结束，避免下次开机翻页加载跨会话历史消息） */
     @PostMapping("/offline")
     public Map<String, Object> offline() {
         if (runtimeConfig.getDeviceMode() == DeviceMode.PILOT) {
@@ -187,11 +191,22 @@ public class SimulatorController {
         }
         mqtt.disconnect();
         diagnosticRecorder.clear();
+        mqtt.clearLogs();
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("success", true);
         result.put("online", state.isOnline());
         result.put("mqtt_connected", mqtt.isConnected());
         return result;
+    }
+
+    /** 断开 MQTT 连接（不执行下线流程，用于注册失败等场景，保留诊断日志供查看失败详情，TC-REG-024） */
+    @PostMapping("/disconnect")
+    public Map<String, Object> disconnect() {
+        mqtt.disconnect();
+        Map<String, Object> disconnectResult = new LinkedHashMap<>();
+        disconnectResult.put("success", true);
+        disconnectResult.put("mqtt_connected", mqtt.isConnected());
+        return disconnectResult;
     }
 
     /** 设备属性信息 */
@@ -205,6 +220,7 @@ public class SimulatorController {
         result.put("controllerSn", runtimeConfig.getControllerSn());
         result.put("controllerModelKey", runtimeConfig.getControllerType().modelKey());
         result.put("deviceMode", runtimeConfig.getDeviceMode().name());
+        result.put("thingVersion", runtimeConfig.getThingVersion());
         return result;
     }
 
@@ -1332,9 +1348,11 @@ public class SimulatorController {
         result.put("drone_type", runtimeConfig.getDroneType().name());
         result.put("device_mode", runtimeConfig.getDeviceMode().name());
         result.put("controller_type", runtimeConfig.getControllerType().name());
+        result.put("selected_payload", runtimeConfig.getSelectedPayload() != null ? runtimeConfig.getSelectedPayload().name() : null);
         result.put("controller_sn", runtimeConfig.getControllerSn());
         result.put("dock_sn", runtimeConfig.getDockSn());
         result.put("drone_sn", runtimeConfig.getDroneSn());
+        result.put("thing_version", runtimeConfig.getThingVersion());
         return result;
     }
 
@@ -1506,12 +1524,12 @@ public class SimulatorController {
         }
         if (config.containsKey("dock_type") && config.get("dock_type") != null) {
             try {
-                runtimeConfig.setDockType(DeviceType.valueOf(String.valueOf(config.get("dock_type")).trim().toUpperCase()));
+                runtimeConfig.setDockType(DockModel.valueOf(String.valueOf(config.get("dock_type")).trim().toUpperCase()));
             } catch (IllegalArgumentException ignored) {}
         }
         if (config.containsKey("drone_type") && config.get("drone_type") != null) {
             try {
-                runtimeConfig.setDroneType(DeviceType.valueOf(String.valueOf(config.get("drone_type")).trim().toUpperCase()));
+                runtimeConfig.setDroneType(DroneModel.valueOf(String.valueOf(config.get("drone_type")).trim().toUpperCase()));
             } catch (IllegalArgumentException ignored) {}
         }
         if (config.containsKey("device_mode") && config.get("device_mode") != null) {
@@ -1521,8 +1539,21 @@ public class SimulatorController {
         }
         if (config.containsKey("controller_type") && config.get("controller_type") != null) {
             try {
-                runtimeConfig.setControllerType(DeviceType.valueOf(String.valueOf(config.get("controller_type")).trim().toUpperCase()));
+                runtimeConfig.setControllerType(RcModel.valueOf(String.valueOf(config.get("controller_type")).trim().toUpperCase()));
             } catch (IllegalArgumentException ignored) {}
+        }
+        if (config.containsKey("selected_payload")) {
+            Object val = config.get("selected_payload");
+            if (val == null || String.valueOf(val).isBlank()) {
+                runtimeConfig.setSelectedPayload(null);
+            } else {
+                try {
+                    runtimeConfig.setSelectedPayload(PayloadType.valueOf(String.valueOf(val).trim().toUpperCase()));
+                } catch (IllegalArgumentException ignored) {}
+            }
+        }
+        if (config.containsKey("thing_version") && !String.valueOf(config.get("thing_version")).isBlank()) {
+            runtimeConfig.setThingVersion(String.valueOf(config.get("thing_version")).trim());
         }
 
         // 重连前若设备在线，先标记离线（重连后需重新上线）

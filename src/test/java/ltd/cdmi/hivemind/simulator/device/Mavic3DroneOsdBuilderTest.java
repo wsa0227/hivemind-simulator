@@ -15,8 +15,13 @@
 
 package ltd.cdmi.hivemind.simulator.device;
 
+import ltd.cdmi.dji.cloudapi.sdk.model.DroneModel;
+
 import ltd.cdmi.hivemind.simulator.config.RuntimeConfig;
 import ltd.cdmi.hivemind.simulator.config.SimulatorProperties;
+import ltd.cdmi.hivemind.simulator.device.osd.Mavic3DroneOsdBuilder;
+import ltd.cdmi.hivemind.simulator.device.osd.OsdContext;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -33,7 +38,7 @@ import static org.junit.jupiter.api.Assertions.*;
  */
 class Mavic3DroneOsdBuilderTest {
 
-    private OsdContext ctx(DeviceType droneType) {
+    private OsdContext ctx(DroneModel droneType) {
         DeviceState state = Mockito.mock(DeviceState.class);
         Mockito.lenient().when(state.getDroneLatitude()).thenReturn(22.5);
         Mockito.lenient().when(state.getDroneLongitude()).thenReturn(113.9);
@@ -42,32 +47,34 @@ class Mavic3DroneOsdBuilderTest {
         Mockito.when(config.getDroneType()).thenReturn(droneType);
 
         SimulatorProperties props = Mockito.mock(SimulatorProperties.class);
-        OsdStrategy strategy = new Dock3OsdStrategy();  // snake_case identity（Pilot 模式风格）
-        return new OsdContext(state, props, config, strategy);
+        return new OsdContext(state, props, config);
     }
 
+    @DisplayName("TC-BUILDER-015：Mavic 3 DroneOsdBuilder 选择与字段集（Pilot 模式）")
     @Test
     void supportsMavic3() {
         Mavic3DroneOsdBuilder builder = new Mavic3DroneOsdBuilder();
-        assertTrue(builder.supports(DeviceType.MAVIC_3E));
-        assertTrue(builder.supports(DeviceType.MAVIC_3T));
-        assertFalse(builder.supports(DeviceType.M4D));
-        assertFalse(builder.supports(DeviceType.M400));
+        assertTrue(builder.supports(DroneModel.MAVIC_3E));
+        assertTrue(builder.supports(DroneModel.MAVIC_3T));
+        assertFalse(builder.supports(DroneModel.M4D));
+        assertFalse(builder.supports(DroneModel.M400));
     }
 
+    @DisplayName("TC-BUILDER-015：Mavic 3 DroneOsdBuilder 选择与字段集（Pilot 模式）— country 字段")
     @Test
     void osdContainsCountry() {
         Mavic3DroneOsdBuilder builder = new Mavic3DroneOsdBuilder();
-        Map<String, Object> osd = builder.buildDroneOsd(ctx(DeviceType.MAVIC_3E));
+        Map<String, Object> osd = builder.buildDroneOsd(ctx(DroneModel.MAVIC_3E));
         assertTrue(osd.containsKey("country"), "Mavic 3 应包含 country（国家区域码）");
         assertEquals("CN", osd.get("country"));
     }
 
+    @DisplayName("TC-BUILDER-015：Mavic 3 DroneOsdBuilder 选择与字段集（Pilot 模式）— cameras 数组")
     @Test
     @SuppressWarnings("unchecked")
     void osdContainsCameras() {
         Mavic3DroneOsdBuilder builder = new Mavic3DroneOsdBuilder();
-        Map<String, Object> osd = builder.buildDroneOsd(ctx(DeviceType.MAVIC_3E));
+        Map<String, Object> osd = builder.buildDroneOsd(ctx(DroneModel.MAVIC_3E));
 
         List<Map<String, Object>> cameras = (List<Map<String, Object>>) osd.get("cameras");
         assertNotNull(cameras, "应有 cameras 数组");
@@ -82,11 +89,12 @@ class Mavic3DroneOsdBuilderTest {
         assertNotNull(cam.get("zoom_focus_mode"));
     }
 
+    @DisplayName("TC-BUILDER-015：Mavic 3 DroneOsdBuilder 选择与字段集（Pilot 模式）— Mavic 3T 红外测温字段")
     @Test
     @SuppressWarnings("unchecked")
     void mavic3TCamerasHasThermalFields() {
         Mavic3DroneOsdBuilder builder = new Mavic3DroneOsdBuilder();
-        Map<String, Object> osd = builder.buildDroneOsd(ctx(DeviceType.MAVIC_3T));
+        Map<String, Object> osd = builder.buildDroneOsd(ctx(DroneModel.MAVIC_3T));
 
         List<Map<String, Object>> cameras = (List<Map<String, Object>>) osd.get("cameras");
         Map<String, Object> cam = cameras.get(0);
@@ -97,11 +105,12 @@ class Mavic3DroneOsdBuilderTest {
         assertTrue(cam.containsKey("ir_metering_area"), "Mavic 3T（thermal）应有 ir_metering_area");
     }
 
+    @DisplayName("TC-BUILDER-015：Mavic 3 DroneOsdBuilder 选择与字段集（Pilot 模式）— Mavic 3E 无红外字段")
     @Test
     @SuppressWarnings("unchecked")
     void mavic3ECamerasNoThermalFields() {
         Mavic3DroneOsdBuilder builder = new Mavic3DroneOsdBuilder();
-        Map<String, Object> osd = builder.buildDroneOsd(ctx(DeviceType.MAVIC_3E));
+        Map<String, Object> osd = builder.buildDroneOsd(ctx(DroneModel.MAVIC_3E));
 
         List<Map<String, Object>> cameras = (List<Map<String, Object>>) osd.get("cameras");
         Map<String, Object> cam = cameras.get(0);
@@ -109,32 +118,36 @@ class Mavic3DroneOsdBuilderTest {
         assertFalse(cam.containsKey("ir_metering_mode"), "Mavic 3E（非 thermal）不应有 ir_metering_mode");
     }
 
+    @DisplayName("TC-BUILDER-015：Mavic 3 DroneOsdBuilder 选择与字段集（Pilot 模式）— 无 distance_limit_status/rth_altitude")
     @Test
     void osdNoDistanceLimitFields() {
         Mavic3DroneOsdBuilder builder = new Mavic3DroneOsdBuilder();
-        Map<String, Object> osd = builder.buildDroneOsd(ctx(DeviceType.MAVIC_3E));
+        Map<String, Object> osd = builder.buildDroneOsd(ctx(DroneModel.MAVIC_3E));
         assertFalse(osd.containsKey("distance_limit_status"), "Mavic 3 属性列表未列 distance_limit_status");
         assertFalse(osd.containsKey("rth_altitude"), "Mavic 3 属性列表未列 rth_altitude");
     }
 
+    @DisplayName("TC-BUILDER-015：Mavic 3 DroneOsdBuilder 选择与字段集（Pilot 模式）— 无 firmware_version（pushMode=1 在 state）")
     @Test
     void osdNoFirmwareVersion() {
         Mavic3DroneOsdBuilder builder = new Mavic3DroneOsdBuilder();
-        Map<String, Object> osd = builder.buildDroneOsd(ctx(DeviceType.MAVIC_3E));
+        Map<String, Object> osd = builder.buildDroneOsd(ctx(DroneModel.MAVIC_3E));
         assertFalse(osd.containsKey("firmware_version"), "Mavic 3 firmware_version 是 pushMode=1（state topic）");
     }
 
+    @DisplayName("TC-BUILDER-015：Mavic 3 DroneOsdBuilder 选择与字段集（Pilot 模式）— 无 type_subtype_gimbalindex")
     @Test
     void osdNoTypeSubtypeGimbalindex() {
         Mavic3DroneOsdBuilder builder = new Mavic3DroneOsdBuilder();
-        Map<String, Object> osd = builder.buildDroneOsd(ctx(DeviceType.MAVIC_3E));
+        Map<String, Object> osd = builder.buildDroneOsd(ctx(DroneModel.MAVIC_3E));
         assertFalse(osd.containsKey("type_subtype_gimbalindex"), "Mavic 3 属性列表未列 type_subtype_gimbalindex");
     }
 
+    @DisplayName("TC-BUILDER-015：Mavic 3 DroneOsdBuilder 选择与字段集（Pilot 模式）— 共用字段")
     @Test
     void osdHasCommonFields() {
         Mavic3DroneOsdBuilder builder = new Mavic3DroneOsdBuilder();
-        Map<String, Object> osd = builder.buildDroneOsd(ctx(DeviceType.MAVIC_3E));
+        Map<String, Object> osd = builder.buildDroneOsd(ctx(DroneModel.MAVIC_3E));
         // 共用字段（基类提供，Mavic 3 属性列表包含）
         assertNotNull(osd.get("mode_code"));
         assertNotNull(osd.get("gear"));

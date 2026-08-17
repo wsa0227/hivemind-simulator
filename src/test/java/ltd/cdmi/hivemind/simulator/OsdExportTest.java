@@ -24,8 +24,10 @@ import ltd.cdmi.hivemind.simulator.device.PilotOnlineService;
 import ltd.cdmi.hivemind.simulator.diagnostic.CoverageRecorder;
 import ltd.cdmi.hivemind.simulator.diagnostic.DiagnosticLogRecorder;
 import ltd.cdmi.hivemind.simulator.handler.*;
+import ltd.cdmi.hivemind.simulator.media.*;
 import ltd.cdmi.hivemind.simulator.mqtt.MqttClientManager;
 import ltd.cdmi.hivemind.simulator.web.SimulatorController;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
@@ -106,6 +108,7 @@ class OsdExportTest {
 
     // ==================== TC-LOG-001：按 SN 过滤 ====================
 
+    @DisplayName("TC-LOG-001：消息导出按 SN 过滤")
     @Test
     void filterBySn() {
         List<Map<String, Object>> logs = new ArrayList<>();
@@ -121,6 +124,7 @@ class OsdExportTest {
 
     // ==================== TC-LOG-002：按 direction 过滤 ====================
 
+    @DisplayName("TC-LOG-002：消息导出按 direction 过滤")
     @Test
     void filterByDirection() {
         List<Map<String, Object>> logs = new ArrayList<>();
@@ -135,6 +139,7 @@ class OsdExportTest {
 
     // ==================== TC-LOG-003：保留所有消息类型（不仅 OSD） ====================
 
+    @DisplayName("TC-LOG-003：消息导出保留所有消息类型")
     @Test
     @SuppressWarnings("unchecked")
     void keepAllMessageTypes() {
@@ -158,6 +163,7 @@ class OsdExportTest {
 
     // ==================== TC-LOG-004：limit 限制条数 ====================
 
+    @DisplayName("TC-LOG-004：消息导出 limit 限制条数")
     @Test
     void limitResults() {
         List<Map<String, Object>> logs = new ArrayList<>();
@@ -174,6 +180,7 @@ class OsdExportTest {
 
     // ==================== TC-LOG-005：多 SN 支持 ====================
 
+    @DisplayName("TC-LOG-005：消息导出多 SN 支持")
     @Test
     void multipleSn() {
         List<Map<String, Object>> logs = new ArrayList<>();
@@ -190,6 +197,7 @@ class OsdExportTest {
 
     // ==================== TC-LOG-006：SN 为空时不过滤（返回所有设备消息） ====================
 
+    @DisplayName("TC-LOG-006：消息导出 SN 为空时不过滤")
     @Test
     void nullSnReturnsAll() {
         List<Map<String, Object>> logs = new ArrayList<>();

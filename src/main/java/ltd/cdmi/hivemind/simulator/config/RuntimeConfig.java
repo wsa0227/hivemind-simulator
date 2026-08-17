@@ -15,8 +15,12 @@
 
 package ltd.cdmi.hivemind.simulator.config;
 
+import ltd.cdmi.dji.cloudapi.sdk.model.DeviceModelProvider;
+import ltd.cdmi.dji.cloudapi.sdk.model.DockModel;
+import ltd.cdmi.dji.cloudapi.sdk.model.DroneModel;
+import ltd.cdmi.dji.cloudapi.sdk.model.RcModel;
 import ltd.cdmi.hivemind.simulator.device.DeviceMode;
-import ltd.cdmi.hivemind.simulator.device.DeviceType;
+import ltd.cdmi.dji.cloudapi.sdk.model.PayloadType;
 import org.springframework.stereotype.Component;
 
 /**
@@ -38,17 +42,19 @@ public class RuntimeConfig {
     private volatile String organizationId;
     private volatile String deviceBindingCode;
     private volatile String appLicense;
-    private volatile DeviceType dockType;
-    private volatile DeviceType droneType;
+    private volatile DockModel dockType;
+    private volatile DroneModel droneType;
     private volatile String dockSn;
     private volatile String droneSn;
 
     /** 设备接入模式（Dock to Cloud / Pilot to Cloud），默认 DOCK */
     private volatile DeviceMode deviceMode;
     /** Pilot 模式网关设备类型（遥控器），默认 RC_PLUS */
-    private volatile DeviceType controllerType;
+    private volatile RcModel controllerType;
     /** Pilot 模式网关 SN，由 controllerType 决定，不可手动配置 */
     private volatile String controllerSn;
+    /** Pilot 模式用户选择的负载（仅 M350/M300/M400 等可挂载通用云台的机型有意义，null 表示回退默认主相机） */
+    private volatile PayloadType selectedPayload;
 
     /** 直播推流配置（运行时可由前端覆盖，yml 提供默认值，LiveConfigStore 持久化恢复） */
     private volatile boolean liveRealPushEnabled;
@@ -88,6 +94,9 @@ public class RuntimeConfig {
     private volatile String mopHost;
     private volatile String mopToken;
 
+    /** 物模型版本号（update_topo thing_version 字段，运行时可由前端覆盖） */
+    private volatile String thingVersion;
+
     private final LiveConfigStore liveConfigStore;
 
     public RuntimeConfig(MqttProperties mqttProps, SimulatorProperties props, LiveConfigStore liveConfigStore) {
@@ -98,15 +107,16 @@ public class RuntimeConfig {
         this.organizationId = "";       // 由用户在注册时通过前端表单输入
         this.deviceBindingCode = "";    // 由用户在注册时通过前端表单输入
         this.appLicense = "";           // 由用户在注册时通过前端表单输入
-        this.dockType = DeviceType.DOCK3;   // 默认设备型号，用户可在注册时切换
-        this.droneType = DeviceType.M4TD;   // 默认设备型号，与 DOCK3 兼容
+        this.dockType = DockModel.DOCK3;   // 默认设备型号，用户可在注册时切换
+        this.droneType = DroneModel.M4TD;   // 默认设备型号，与 DOCK3 兼容
         // SN 完全由设备型号决定，不可手动配置
         this.dockSn = this.dockType.defaultSn();
         this.droneSn = this.droneType.defaultSn();
         // Pilot 模式默认配置（仅 deviceMode=PILOT 时生效）
         this.deviceMode = DeviceMode.DOCK;          // 默认 Dock 模式
-        this.controllerType = DeviceType.RC_PLUS;   // 默认遥控器型号，用户可在注册时切换
+        this.controllerType = RcModel.RC_PLUS;   // 默认遥控器型号，用户可在注册时切换
         this.controllerSn = this.controllerType.defaultSn();
+        this.selectedPayload = null;  // 默认未选择，OSD 构建时回退 defaultCameraFor()
         this.liveConfigStore = liveConfigStore;
 
         // yml 提供默认值
@@ -190,6 +200,14 @@ public class RuntimeConfig {
             this.mopToken = "";
         }
 
+        // 物模型版本（yml 默认值，运行时可由前端覆盖）
+        SimulatorProperties.Thing thingConfig = props.thing();
+        if (thingConfig != null && thingConfig.thingVersion() != null) {
+            this.thingVersion = thingConfig.thingVersion();
+        } else {
+            this.thingVersion = "1.2.3";
+        }
+
         // 持久化文件覆盖 yml 默认值（文件不存在或读取失败时保持 yml 默认值）
         LiveConfigStore.LiveConfig saved = liveConfigStore.load();
         if (saved != null) {
@@ -227,14 +245,14 @@ public class RuntimeConfig {
     public String getAppLicense() { return appLicense; }
     public void setAppLicense(String appLicense) { this.appLicense = appLicense; }
 
-    public DeviceType getDockType() { return dockType; }
-    public void setDockType(DeviceType dockType) {
+    public DockModel getDockType() { return dockType; }
+    public void setDockType(DockModel dockType) {
         this.dockType = dockType;
         this.dockSn = dockType.defaultSn();
     }
 
-    public DeviceType getDroneType() { return droneType; }
-    public void setDroneType(DeviceType droneType) {
+    public DroneModel getDroneType() { return droneType; }
+    public void setDroneType(DroneModel droneType) {
         this.droneType = droneType;
         this.droneSn = droneType.defaultSn();
     }
@@ -246,13 +264,16 @@ public class RuntimeConfig {
     public DeviceMode getDeviceMode() { return deviceMode; }
     public void setDeviceMode(DeviceMode deviceMode) { this.deviceMode = deviceMode; }
 
-    public DeviceType getControllerType() { return controllerType; }
-    public void setControllerType(DeviceType controllerType) {
+    public RcModel getControllerType() { return controllerType; }
+    public void setControllerType(RcModel controllerType) {
         this.controllerType = controllerType;
         this.controllerSn = controllerType.defaultSn();
     }
 
     public String getControllerSn() { return controllerSn; }
+
+    public PayloadType getSelectedPayload() { return selectedPayload; }
+    public void setSelectedPayload(PayloadType selectedPayload) { this.selectedPayload = selectedPayload; }
 
     /**
      * 获取当前模式的网关 SN。
@@ -267,7 +288,7 @@ public class RuntimeConfig {
      * 获取当前模式的网关设备类型。
      * <p>Dock 模式返回 dockType，Pilot 模式返回 controllerType。
      */
-    public DeviceType getGatewayType() {
+    public DeviceModelProvider getGatewayType() {
         return deviceMode == DeviceMode.PILOT ? controllerType : dockType;
     }
 
@@ -333,6 +354,9 @@ public class RuntimeConfig {
 
     public String getMopToken() { return mopToken; }
     public void setMopToken(String mopToken) { this.mopToken = mopToken; }
+
+    public String getThingVersion() { return thingVersion; }
+    public void setThingVersion(String thingVersion) { this.thingVersion = thingVersion; }
 
     /**
      * 将当前 live + media + location 配置持久化到文件。

@@ -22,6 +22,7 @@ import ltd.cdmi.hivemind.simulator.handler.OtaSimulator;
 import ltd.cdmi.hivemind.simulator.handler.OtaSimulator.TriggerResult;
 import ltd.cdmi.hivemind.simulator.mqtt.DockTopicSchema;
 import ltd.cdmi.hivemind.simulator.mqtt.MqttClientManager;
+import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
@@ -51,16 +52,15 @@ class OtaSimulatorTest {
         return objectMapper.readTree(json);
     }
 
-    @SuppressWarnings("unchecked")
     private JsonNode captureEnvelope(MqttClientManager mqtt) throws Exception {
-        ArgumentCaptor<Object> captor = ArgumentCaptor.forClass(Object.class);
-        Mockito.verify(mqtt, Mockito.atLeastOnce()).publishJson(Mockito.anyString(), captor.capture());
-        Map<String, Object> envelope = (Map<String, Object>) captor.getValue();
-        return objectMapper.readTree(objectMapper.writeValueAsString(envelope));
+        ArgumentCaptor<String> captor = ArgumentCaptor.forClass(String.class);
+        Mockito.verify(mqtt, Mockito.atLeastOnce()).publish(Mockito.anyString(), captor.capture());
+        return objectMapper.readTree(captor.getValue());
     }
 
     // ==================== TC-OTA-001：ota_create 服务应答 ====================
 
+    @DisplayName("TC-OTA-001：ota_create 服务应答")
     @Test
     void otaCreateReply() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -78,6 +78,7 @@ class OtaSimulatorTest {
 
     // ==================== TC-OTA-002：ota_create 自动模拟升级进度 ====================
 
+    @DisplayName("TC-OTA-002：ota_create 自动模拟升级进度")
     @Test
     void otaCreateAutoProgress() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -91,15 +92,16 @@ class OtaSimulatorTest {
         Thread.sleep(7000);
 
         // 验证至少上报了 3 次 ota_progress
-        Mockito.verify(mqtt, Mockito.atLeast(3)).publishJson(Mockito.anyString(), Mockito.any());
+        Mockito.verify(mqtt, Mockito.atLeast(3)).publish(Mockito.anyString(), Mockito.any());
 
         JsonNode envelope = captureEnvelope(mqtt);
         assertEquals("ota_progress", envelope.path("method").asText());
-        assertEquals(0, envelope.path("need_reply").asInt());
+        assertEquals(1, envelope.path("need_reply").asInt());
     }
 
     // ==================== TC-OTA-003：ota_progress 事件结构 ====================
 
+    @DisplayName("TC-OTA-003：ota_progress 事件结构")
     @Test
     void otaProgressEventStructure() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -119,7 +121,7 @@ class OtaSimulatorTest {
 
         JsonNode envelope = captureEnvelope(mqtt);
         assertEquals("ota_progress", envelope.path("method").asText());
-        assertEquals(0, envelope.path("need_reply").asInt());
+        assertEquals(1, envelope.path("need_reply").asInt());
         assertEquals(0, envelope.path("data").path("result").asInt());
         assertEquals("in_progress", envelope.path("data").path("output").path("status").asText());
         assertEquals(30, envelope.path("data").path("output").path("progress").path("percent").asInt());
@@ -128,6 +130,7 @@ class OtaSimulatorTest {
 
     // ==================== TC-OTA-004：ota_progress current_step 枚举 ====================
 
+    @DisplayName("TC-OTA-004：ota_progress current_step 枚举")
     @Test
     void otaProgressCurrentStepEnum() throws Exception {
         MqttClientManager mqtt = Mockito.mock(MqttClientManager.class);
@@ -151,6 +154,7 @@ class OtaSimulatorTest {
 
     // ==================== TC-OTA-005：isOtaServiceMethod 识别固件升级指令 ====================
 
+    @DisplayName("TC-OTA-005：isOtaServiceMethod 识别固件升级指令")
     @Test
     void isOtaServiceMethodRecognition() {
         assertTrue(OtaSimulator.isOtaServiceMethod("ota_create"));
